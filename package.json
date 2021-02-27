@@ -4,7 +4,7 @@
     "license": "MIT",
     "scripts": {
         "start": "parcel serve ./src/index.html",
-        "build": "parcel build ./src/index.html",
+        "build": "rimraf public .parcel-cache && parcel build ./src/index.html --dist-dir public --no-cache",
         "lint": "eslint . && prettier --list-different . && cspell '**/*/{ts,js,md}' && tsc --noEmit"
     },
     "devDependencies": {

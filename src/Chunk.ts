@@ -22,27 +22,35 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
     // purpose with or without fee is hereby granted, provided that the above
     // copyright notice and this permission notice appear in all copies.
     const { seedNoise, simplex2 } = (function () {
-        class Grad {
-            constructor(public x: number, public y: number, public z: number) {}
+        interface Grad {
+            x: number;
+            y: number;
+            dot2(x: number, y: number): number;
+        }
 
-            public dot2(x: number, y: number): number {
-                return this.x * x + this.y * y;
-            }
+        function Grad(x: number, y: number): Grad {
+            return {
+                x,
+                y,
+                dot2(x2: number, y2: number): number {
+                    return x * x2 + y * y2;
+                },
+            };
         }
 
         const grad3 = [
-            new Grad(1, 1, 0),
-            new Grad(-1, 1, 0),
-            new Grad(1, -1, 0),
-            new Grad(-1, -1, 0),
-            new Grad(1, 0, 1),
-            new Grad(-1, 0, 1),
-            new Grad(1, 0, -1),
-            new Grad(-1, 0, -1),
-            new Grad(0, 1, 1),
-            new Grad(0, -1, 1),
-            new Grad(0, 1, -1),
-            new Grad(0, -1, -1),
+            Grad(1, 1),
+            Grad(-1, 1),
+            Grad(1, -1),
+            Grad(-1, -1),
+            Grad(1, 0),
+            Grad(-1, 0),
+            Grad(1, 0),
+            Grad(-1, 0),
+            Grad(0, 1),
+            Grad(0, -1),
+            Grad(0, 1),
+            Grad(0, -1),
         ];
 
         // prettier-ignore
@@ -143,7 +151,7 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
             CHUNK_DEPTH,
             MAX_HEIGHT,
         } = parameters;
-        // For example if width=2, height=2 then we generate:
+        // For example if width=2, depth=2 then we generate:
         // * * *
         // * * *
         // * * *
