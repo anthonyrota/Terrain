@@ -1,0 +1,33 @@
+{
+    "compilerOptions": {
+        "target": "esnext",
+        "module": "esnext",
+        "moduleResolution": "node",
+        "esModuleInterop": false,
+        "allowJs": true,
+        "checkJs": true,
+        "importHelpers": true,
+        "jsx": "react",
+        "jsxFactory": "h",
+        "alwaysStrict": true,
+        "sourceMap": true,
+        "forceConsistentCasingInFileNames": true,
+        "strict": true,
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitReturns": true,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "noImplicitAny": false,
+        "noImplicitThis": false,
+        "strictNullChecks": true,
+        "downlevelIteration": true,
+        "resolveJsonModule": true,
+        "baseUrl": ".",
+        "noEmit": true,
+        "declaration": true,
+        "declarationMap": true,
+        "lib": ["esnext", "dom"],
+        "types": ["node"]
+    },
+    "include": ["src/**/*", "prettier.config.js"]
+}
