@@ -5,6 +5,7 @@
         "**/coverage/**",
         "**/node_modules/**",
         "**/public/**",
+        "**/dist/**",
         "**/*.json",
         "**/*.html"
     ],
@@ -18,6 +19,6 @@
         "filetypes"
     ],
     "ignoreRegExpList": [],
-    "words": ["lacunarity", "lerp", "workerize", "workerized"],
+    "words": ["lacunarity", "lerp", "seedrandom", "workerize", "workerized"],
     "overrides": []
 }

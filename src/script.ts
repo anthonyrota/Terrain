@@ -3,10 +3,10 @@ import { Disposable } from './Disposable';
 
 const canvas = document.querySelector('.canvas') as HTMLCanvasElement;
 
-const PIXEL_SIZE = 3;
+const PIXEL_SIZE = 1;
 
-const CHUNK_WIDTH = 256;
-const CHUNK_DEPTH = 256;
+const CHUNK_WIDTH = 1024;
+const CHUNK_DEPTH = 1024;
 const MAX_HEIGHT = 256;
 
 canvas.width = (CHUNK_WIDTH + 1) * PIXEL_SIZE;

@@ -15,13 +15,40 @@ interface ChunkWorkerExports extends WorkerMethodMap {
 }
 
 function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
+    // https://github.com/davidbau/seedrandom/blob/released/seedrandom.js
+    // Copyright 2019 David Bau.
+    // Permission is hereby granted, free of charge, to any person obtaining
+    // a copy of this software and associated documentation files (the
+    // "Software"), to deal in the Software without restriction, including
+    // without limitation the rights to use, copy, modify, merge, publish,
+    // distribute, sublicense, and/or sell copies of the Software, and to
+    // permit persons to whom the Software is furnished to do so, subject to
+    // the following conditions:
+    // The above copyright notice and this permission notice shall be
+    // included in all copies or substantial portions of the Software.
+    // Modified slightly to make usage easier.
+    interface SeedRandom {
+        seedrandom: {
+            new (seed: string): {
+                quick(): number;
+            };
+        };
+    }
+    const random = {} as SeedRandom;
+    // prettier-ignore
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    // eslint-disable-next-line
+    !function(f,a,c){var s,l=256,p="random",d=Math.pow(l,6),g=Math.pow(2,52),y=2*g,h=l-1;function n(n,t,r){function e(){for(var n=u.g(6),t=d,r=0;n<g;)n=(n+r)*l,t*=l,r=u.g(1);for(;y<=n;)n/=2,t/=2,r>>>=1;return(n+r)/t}var o=[],i=j(function n(t){return t}((t=1==t?{entropy:!0}:t||{}).entropy?[n,S(a)]:null==n?function(){try{var n;return s&&(n=s.randomBytes)?n=n(l):(n=new Uint8Array(l),(f.crypto||f.msCrypto).getRandomValues(n)),S(n)}catch(n){var t=f.navigator,r=t&&t.plugins;return[+new Date,f,r,f.screen,S(a)]}}():n,3),o),u=new m(o);return e.int32=function(){return 0|u.g(4)},e.quick=function(){return u.g(4)/4294967296},e.double=e,j(S(u.S),a),(t.pass||r||function(n,t,r,e){return e&&(e.S&&v(e,u),n.state=function(){return v(u,{})}),r?(c[p]=n,t):n})(e,i,"global"in t?t.global:this==c,t.state)}function m(n){var t,r=n.length,u=this,e=0,o=u.i=u.j=0,i=u.S=[];for(r||(n=[r++]);e<l;)i[e]=e++;for(e=0;e<l;e++)i[e]=i[o=h&o+n[e%r]+(t=i[e])],i[o]=t;(u.g=function(n){for(var t,r=0,e=u.i,o=u.j,i=u.S;n--;)t=i[e=h&e+1],r=r*l+i[h&(i[e]=i[o=h&o+t])+(i[o]=t)];return u.i=e,u.j=o,r})(l)}function v(n,t){return t.i=n.i,t.j=n.j,t.S=n.S.slice(),t}function j(n,t){for(var r,e=n+"",o=0;o<e.length;)t[h&o]=h&(r^=19*t[h&o])+e.charCodeAt(o++);return S(t)}function S(n){return String.fromCharCode.apply(0,n)}j(Math.random(),a);c["seed"+p]=n}("undefined"!=typeof self?self:this,[],random);
+
     // https://github.com/josephg/noisejs/blob/master/perlin.js
     // ISC License
     // Copyright (c) 2013, Joseph Gentle
     // Permission to use, copy, modify, and/or distribute this software for any
     // purpose with or without fee is hereby granted, provided that the above
     // copyright notice and this permission notice appear in all copies.
-    const { seedNoise, simplex2 } = (function () {
+    // Make TypeScript compatible and stripped parts not needed.
+    const { simplex2, seedNoise, getSeed } = (function () {
         interface Grad {
             x: number;
             y: number;
@@ -59,11 +86,15 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
         const perm = new Array<number>(512);
         const gradP = new Array<Grad>(512);
 
+        let currentSeed: number;
+
         function seedNoise(seed: number): void {
             seed = Math.floor(seed);
             if (seed < 256) {
                 seed |= seed << 8;
             }
+
+            currentSeed = seed;
 
             for (let i = 0; i < 256; i++) {
                 let v: number;
@@ -76,6 +107,10 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
                 perm[i] = perm[i + 256] = v;
                 gradP[i] = gradP[i + 256] = grad3[v % 12];
             }
+        }
+
+        function getSeed(): number {
+            return currentSeed;
         }
 
         seedNoise(Math.random() * 65536);
@@ -136,8 +171,9 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
         }
 
         return {
-            seedNoise,
             simplex2,
+            seedNoise,
+            getSeed,
         };
     })();
 
@@ -200,7 +236,7 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
             }
         }
 
-        // https://jobtalle.com/simulating_hydraulic_erosion.html
+        // Based off https://jobtalle.com/simulating_hydraulic_erosion.html
         // MIT License
         // Copyright (c) 2020 Job Talle
         // Permission is hereby granted, free of charge, to any person obtaining
@@ -349,9 +385,13 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
             return normal;
         }
 
+        const seededRandom = new random.seedrandom(
+            `${getSeed()},${chunkX},${chunkZ}`,
+        );
+
         function trace(x: number, z: number): void {
-            const offsetX = (Math.random() * 2 - 1) * RADIUS;
-            const offsetZ = (Math.random() * 2 - 1) * RADIUS;
+            const offsetX = (seededRandom.quick() * 2 - 1) * RADIUS;
+            const offsetZ = (seededRandom.quick() * 2 - 1) * RADIUS;
             let sediment = 0;
             let previousX = x;
             let previousZ = z;
@@ -391,8 +431,8 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
 
         for (let i = 0; i < dropsCount; i++) {
             trace(
-                Math.random() * (CHUNK_WIDTH + 1),
-                Math.random() * (CHUNK_DEPTH + 1),
+                seededRandom.quick() * (CHUNK_WIDTH + 1),
+                seededRandom.quick() * (CHUNK_DEPTH + 1),
             );
         }
 
