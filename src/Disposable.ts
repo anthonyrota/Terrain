@@ -1,4 +1,4 @@
-import { removeFirst } from './util/removeFirst';
+import { removeFirst } from './removeFirst';
 
 export class Disposable {
     private _children: Disposable[] | null = [];

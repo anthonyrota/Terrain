@@ -4,13 +4,16 @@ import workerize, {
     Workerized,
 } from 'workerize';
 import { Disposable } from './Disposable';
-import { removeFirst } from './util/removeFirst';
+import { removeFirst } from './removeFirst';
 
-export class WorkerPool<M extends WorkerMethodMap> extends Disposable {
+export class WorkerPool<
+    M extends WorkerMethodMap,
+    K_ extends keyof M
+> extends Disposable {
     private _activeWorkers: Workerized<M>[] = [];
     private _inactiveWorkers: Workerized<M>[] = [];
     private _executionQueue: {
-        method: keyof M;
+        method: K_;
         parameters: Parameters<M[keyof M]>;
         disposable: Disposable;
         onExecutionStart: () => void;
@@ -34,7 +37,7 @@ export class WorkerPool<M extends WorkerMethodMap> extends Disposable {
         }
     }
 
-    public execute<K extends keyof M>(
+    public execute<K extends K_>(
         method: K,
         parameters: Parameters<M[K]>,
         disposable: Disposable,
@@ -86,7 +89,7 @@ export class WorkerPool<M extends WorkerMethodMap> extends Disposable {
         this._executionQueue.length = 0;
     }
 
-    private _execute<K extends keyof M>(
+    private _execute<K extends K_>(
         method: K,
         parameters: Parameters<M[K]>,
         disposable: Disposable,
@@ -143,6 +146,6 @@ export class WorkerPool<M extends WorkerMethodMap> extends Disposable {
     }
 }
 
-class ExecutionCanceledError extends Error {
+export class ExecutionCanceledError extends Error {
     public name = 'ExecutionCanceledError';
 }

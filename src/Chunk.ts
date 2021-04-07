@@ -1,17 +1,65 @@
 import { WorkerMethodMap } from 'workerize';
 import { WorkerPool } from './WorkerPool';
 
-interface ChunkGenerationParameters {
-    chunkX: number;
-    chunkZ: number;
+export interface ChunkHeightMapGenerationErosionParameters {
+    DROPS_PER_CELL: number;
+    EROSION_RATE: number;
+    DEPOSITION_RATE: number;
+    SPEED: number;
+    FRICTION: number;
+    RADIUS: number;
+    MAX_RAIN_ITERATIONS: number;
+    ITERATION_SCALE: number;
+}
+
+export interface ChunkHeightMapGenerationGeneralParameters {
     CHUNK_WIDTH: number;
     CHUNK_DEPTH: number;
     MAX_HEIGHT: number;
+    OCTAVES: number;
+    PERSISTENCE: number;
+    LACUNARITY: number;
+    FINENESS: number;
+    erosionParameters: ChunkHeightMapGenerationErosionParameters;
+}
+
+export interface ChunkHeightMapGenerationParameters
+    extends ChunkHeightMapGenerationGeneralParameters {
+    chunkX: number;
+    chunkZ: number;
+}
+
+export interface ChunkColorRegion {
+    maxHeight: number;
+    color: [number, number, number];
+    blend: number;
+}
+
+export interface ChunkGenerationParameters
+    extends ChunkHeightMapGenerationParameters {
+    colorRegions: ChunkColorRegion[];
+}
+
+export interface ChunkData {
+    heightMap: Float32Array;
+    vertices: Float32Array;
+    normals: Float32Array;
+    indices: Uint16Array;
+    colors: Float32Array;
+}
+
+export enum ChunkWorkerMethod {
+    SEED_NOISE = 'seedNoise',
+    GENERATE_HEIGHT_MAP = 'generateHeightMap',
+    GENERATE_CHUNK_DATA = 'generateChunkData',
 }
 
 interface ChunkWorkerExports extends WorkerMethodMap {
     seedNoise(seed: number): void;
-    generateHeightMap(parameters: ChunkGenerationParameters): Float32Array;
+    generateHeightMap(
+        parameters: ChunkHeightMapGenerationParameters,
+    ): Float32Array;
+    generateChunkData(parameters: ChunkGenerationParameters): ChunkData;
 }
 
 function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
@@ -178,7 +226,7 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
     })();
 
     function generateHeightMap(
-        parameters: ChunkGenerationParameters,
+        parameters: ChunkHeightMapGenerationParameters,
     ): Float32Array {
         const {
             chunkX,
@@ -186,7 +234,22 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
             CHUNK_WIDTH,
             CHUNK_DEPTH,
             MAX_HEIGHT,
+            OCTAVES,
+            PERSISTENCE,
+            LACUNARITY,
+            FINENESS,
+            erosionParameters,
         } = parameters;
+        const {
+            DROPS_PER_CELL,
+            EROSION_RATE,
+            DEPOSITION_RATE,
+            SPEED,
+            FRICTION,
+            RADIUS,
+            MAX_RAIN_ITERATIONS,
+            ITERATION_SCALE,
+        } = erosionParameters;
         // For example if width=2, depth=2 then we generate:
         // * * *
         // * * *
@@ -196,11 +259,6 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
         const heightMap = new Float32Array(
             (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1),
         );
-
-        const OCTAVES = 4;
-        const PERSISTENCE = 0.4;
-        const LACUNARITY = 3;
-        const FINENESS = 100;
 
         let maxPossibleNoiseValue = 0;
         let amplitude = 1;
@@ -248,14 +306,6 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
         // the following conditions:
         // The above copyright notice and this permission notice shall be
         // included in all copies or substantial portions of the Software.
-        const DROPS_PER_CELL = 0.75;
-        const EROSION_RATE = 0.04;
-        const DEPOSITION_RATE = 0.03;
-        const SPEED = 0.15;
-        const FRICTION = 0.7;
-        const RADIUS = 0.8;
-        const MAX_RAIN_ITERATIONS = 800;
-        const ITERATION_SCALE = 0.04;
 
         function getInterpolatedHeight(x: number, z: number): number {
             const DEFAULT = 0;
@@ -353,38 +403,6 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
             }
         }
 
-        interface Vector3 {
-            x: number;
-            y: number;
-            z: number;
-        }
-
-        function normalizeVector3(vector: Vector3): void {
-            const lengthSquared =
-                vector.x * vector.x + vector.y * vector.y + vector.z * vector.z;
-            const scale = 1 / Math.sqrt(lengthSquared);
-            vector.x *= scale;
-            vector.y *= scale;
-            vector.z *= scale;
-        }
-
-        function sampleNormal(x: number, z: number): Vector3 {
-            const left = getInterpolatedHeight(x - 1, z);
-            const top = getInterpolatedHeight(x, z - 1);
-            const right = getInterpolatedHeight(x + 1, z);
-            const bottom = getInterpolatedHeight(x, z + 1);
-
-            const normal = {
-                x: -2 * (right - left),
-                y: 4,
-                z: -2 * (bottom - top),
-            };
-
-            normalizeVector3(normal);
-
-            return normal;
-        }
-
         const seededRandom = new random.seedrandom(
             `${getSeed()},${chunkX},${chunkZ}`,
         );
@@ -399,16 +417,39 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
             let velocityZ = 0;
 
             for (let i = 0; i < MAX_RAIN_ITERATIONS; i++) {
-                const surfaceNormal = sampleNormal(x + offsetX, z + offsetZ);
+                const left = getInterpolatedHeight(
+                    x + offsetX - 1,
+                    z + offsetZ,
+                );
+                const top = getInterpolatedHeight(x + offsetX, z + offsetZ - 1);
+                const right = getInterpolatedHeight(
+                    x + offsetX + 1,
+                    z + offsetZ,
+                );
+                const bottom = getInterpolatedHeight(
+                    x + offsetX,
+                    z + offsetZ + 1,
+                );
 
-                if (surfaceNormal.y === 1) {
+                let normalX = left - right;
+                let normalY = 2;
+                let normalZ = top - bottom;
+
+                const lengthSquared =
+                    normalX ** 2 + normalY ** 2 + normalZ ** 2;
+                const scale = 1 / Math.sqrt(lengthSquared);
+                normalX *= scale;
+                normalY *= scale;
+                normalZ *= scale;
+
+                if (normalY === 1) {
                     break;
                 }
 
-                const deposit = sediment * DEPOSITION_RATE * surfaceNormal.y;
+                const deposit = sediment * DEPOSITION_RATE * normalY;
                 const erosion =
                     EROSION_RATE *
-                    (1 - surfaceNormal.y) *
+                    (1 - normalY) *
                     Math.min(1, i * ITERATION_SCALE);
 
                 changeInterpolatedHeight(
@@ -418,8 +459,8 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
                 );
                 sediment += erosion - deposit;
 
-                velocityX = FRICTION * velocityX + surfaceNormal.x * SPEED;
-                velocityZ = FRICTION * velocityZ + surfaceNormal.z * SPEED;
+                velocityX = FRICTION * velocityX + normalX * SPEED;
+                velocityZ = FRICTION * velocityZ + normalZ * SPEED;
                 previousX = x;
                 previousZ = z;
                 x += velocityX;
@@ -441,11 +482,131 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
         return heightMap;
     }
 
+    function generateChunkData(parameters: ChunkGenerationParameters) {
+        const {
+            CHUNK_WIDTH,
+            CHUNK_DEPTH,
+            MAX_HEIGHT,
+            colorRegions,
+        } = parameters;
+        const heightMap = generateHeightMap(parameters);
+        const vertices = new Float32Array(
+            (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1) * 3,
+        );
+        const normals = new Float32Array(
+            (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1) * 3,
+        );
+        const indices = new Uint16Array(CHUNK_WIDTH * CHUNK_DEPTH * 6);
+        const colors = new Float32Array(
+            (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1) * 3,
+        );
+
+        let p = 0;
+        let p2 = 0;
+        for (let z = 0; z <= CHUNK_DEPTH; z++) {
+            for (let x = 0; x <= CHUNK_WIDTH; x++) {
+                const height = heightMap[p2];
+                const left = x === 0 ? height : heightMap[p2 - 1];
+                const right = x === CHUNK_WIDTH ? height : heightMap[p2 + 1];
+                const top =
+                    z === 0 ? height : heightMap[p2 - (CHUNK_WIDTH + 1)];
+                const bottom =
+                    z === CHUNK_DEPTH
+                        ? height
+                        : heightMap[p2 + (CHUNK_WIDTH + 1)];
+                p2++;
+                let normalX = left - right;
+                let normalY = 2;
+                let normalZ = top - bottom;
+                const lengthSquared =
+                    normalX ** 2 + normalY ** 2 + normalZ ** 2;
+                const scale = 1 / Math.sqrt(lengthSquared);
+                normalX *= scale;
+                normalY *= scale;
+                normalZ *= scale;
+                normals[p] = normalX;
+                vertices[p++] = x;
+                normals[p] = normalY;
+                vertices[p++] = height;
+                normals[p] = normalZ;
+                vertices[p++] = z;
+            }
+        }
+
+        p = 0;
+        p2 = 0;
+        for (let z = 0; z < CHUNK_DEPTH; z++) {
+            for (let x = 0; x < CHUNK_WIDTH; x++) {
+                indices[p++] = p2;
+                indices[p++] = p2 + (CHUNK_WIDTH + 1);
+                indices[p++] = p2 + 1;
+                indices[p++] = p2 + (CHUNK_WIDTH + 1);
+                indices[p++] = p2 + 1 + (CHUNK_WIDTH + 1);
+                indices[p++] = p2 + 1;
+                p2++;
+            }
+            p2++;
+        }
+
+        p = 0;
+        for (let i = 0; i < (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1); i++) {
+            const height = heightMap[i] / MAX_HEIGHT;
+            let isInRegion = false;
+            for (let i = 0; i < colorRegions.length; i++) {
+                const region = colorRegions[i];
+                const prevRegion = colorRegions[i - 1];
+                if (height > region.maxHeight) {
+                    continue;
+                }
+                isInRegion = true;
+                if (prevRegion) {
+                    const blend = Math.min(
+                        (height - prevRegion.maxHeight) /
+                            ((region.maxHeight - prevRegion.maxHeight) *
+                                region.blend),
+                        1,
+                    );
+                    const r =
+                        prevRegion.color[0] +
+                        (region.color[0] - prevRegion.color[0]) * blend;
+                    const g =
+                        prevRegion.color[1] +
+                        (region.color[1] - prevRegion.color[1]) * blend;
+                    const b =
+                        prevRegion.color[2] +
+                        (region.color[2] - prevRegion.color[2]) * blend;
+                    colors[p++] = r;
+                    colors[p++] = g;
+                    colors[p++] = b;
+                } else {
+                    colors[p++] = region.color[0];
+                    colors[p++] = region.color[1];
+                    colors[p++] = region.color[2];
+                }
+                break;
+            }
+            if (!isInRegion) {
+                colors[p++] = 0;
+                colors[p++] = 0;
+                colors[p++] = 0;
+            }
+        }
+
+        return {
+            heightMap,
+            vertices,
+            normals,
+            indices,
+            colors,
+        };
+    }
+
     exports.seedNoise = seedNoise;
     exports.generateHeightMap = generateHeightMap;
+    exports.generateChunkData = generateChunkData;
 }
 
-const chunkWorker = new WorkerPool<ChunkWorkerExports>(
+const chunkWorker = new WorkerPool<ChunkWorkerExports, `${ChunkWorkerMethod}`>(
     ChunkWorkerFactory,
     navigator.hardwareConcurrency,
 );

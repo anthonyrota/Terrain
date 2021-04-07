@@ -19,6 +19,14 @@
         "filetypes"
     ],
     "ignoreRegExpList": [],
-    "words": ["lacunarity", "lerp", "seedrandom", "workerize", "workerized"],
+    "words": [
+        "lacunarity",
+        "lerp",
+        "mozpointerlockchange",
+        "seedrandom",
+        "talle",
+        "workerize",
+        "workerized"
+    ],
     "overrides": []
 }
