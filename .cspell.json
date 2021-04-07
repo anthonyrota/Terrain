@@ -20,9 +20,11 @@
     ],
     "ignoreRegExpList": [],
     "words": [
+        "highp",
         "lacunarity",
         "lerp",
         "mozpointerlockchange",
+        "nocheck",
         "seedrandom",
         "talle",
         "workerize",

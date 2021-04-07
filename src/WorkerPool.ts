@@ -1,10 +1,10 @@
+import { Disposable } from './Disposable';
+import { removeFirst } from './removeFirst';
 import workerize, {
     WorkerMethodMap,
     WorkerFactory,
     Workerized,
-} from 'workerize';
-import { Disposable } from './Disposable';
-import { removeFirst } from './removeFirst';
+} from './workerize';
 
 export class WorkerPool<
     M extends WorkerMethodMap,

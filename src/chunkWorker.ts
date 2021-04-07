@@ -1,4 +1,4 @@
-import { WorkerMethodMap } from 'workerize';
+import { WorkerFactoryExports, WorkerMethodMap } from './workerize';
 import { WorkerPool } from './WorkerPool';
 
 export interface ChunkHeightMapGenerationErosionParameters {
@@ -20,6 +20,7 @@ export interface ChunkHeightMapGenerationGeneralParameters {
     PERSISTENCE: number;
     LACUNARITY: number;
     FINENESS: number;
+    NOISE_SLOPE: number;
     erosionParameters: ChunkHeightMapGenerationErosionParameters;
 }
 
@@ -62,7 +63,9 @@ interface ChunkWorkerExports extends WorkerMethodMap {
     generateChunkData(parameters: ChunkGenerationParameters): ChunkData;
 }
 
-function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
+function ChunkWorkerFactory(
+    exports: WorkerFactoryExports<ChunkWorkerExports>,
+): void {
     // https://github.com/davidbau/seedrandom/blob/released/seedrandom.js
     // Copyright 2019 David Bau.
     // Permission is hereby granted, free of charge, to any person obtaining
@@ -136,7 +139,7 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
 
         let currentSeed: number;
 
-        function seedNoise(seed: number): void {
+        function seedNoise(seed: number): { result: undefined } {
             seed = Math.floor(seed);
             if (seed < 256) {
                 seed |= seed << 8;
@@ -155,13 +158,17 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
                 perm[i] = perm[i + 256] = v;
                 gradP[i] = gradP[i + 256] = grad3[v % 12];
             }
+
+            return {
+                result: undefined,
+            };
         }
 
         function getSeed(): number {
             return currentSeed;
         }
 
-        seedNoise(Math.random() * 65536);
+        seedNoise(1232);
 
         const F2 = 0.5 * (Math.sqrt(3) - 1);
         const G2 = (3 - Math.sqrt(3)) / 6;
@@ -227,7 +234,7 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
 
     function generateHeightMap(
         parameters: ChunkHeightMapGenerationParameters,
-    ): Float32Array {
+    ): { result: Float32Array; transferList: Transferable[] } {
         const {
             chunkX,
             chunkZ,
@@ -238,6 +245,7 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
             PERSISTENCE,
             LACUNARITY,
             FINENESS,
+            NOISE_SLOPE,
             erosionParameters,
         } = parameters;
         const {
@@ -269,8 +277,8 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
 
         for (let i = 0; i <= CHUNK_WIDTH; i++) {
             for (let j = 0; j <= CHUNK_DEPTH; j++) {
-                const x = chunkX + i;
-                const z = chunkZ + j;
+                const x = chunkX * CHUNK_WIDTH + i;
+                const z = chunkZ * CHUNK_DEPTH + j;
                 const noiseX = x / FINENESS;
                 const noiseZ = z / FINENESS;
                 let amplitude = 1;
@@ -282,7 +290,8 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
                     // simplex2 has range [-1, 1] so add 1 to make range [0, 2]
                     // then divide by 2 to make range [0, 1]
                     const noiseValue = (1 + simplex2(sampleX, sampleZ)) / 2;
-                    accumulatedNoiseValue += noiseValue * amplitude;
+                    accumulatedNoiseValue +=
+                        Math.pow(noiseValue, NOISE_SLOPE) * amplitude;
                     amplitude *= PERSISTENCE;
                     frequency *= LACUNARITY;
                 }
@@ -479,17 +488,21 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
 
         blurHeightMap();
 
-        return heightMap;
+        return { result: heightMap, transferList: [heightMap.buffer] };
     }
 
-    function generateChunkData(parameters: ChunkGenerationParameters) {
+    function generateChunkData(
+        parameters: ChunkGenerationParameters,
+    ): { result: ChunkData; transferList: Transferable[] } {
         const {
+            chunkX,
+            chunkZ,
             CHUNK_WIDTH,
             CHUNK_DEPTH,
             MAX_HEIGHT,
             colorRegions,
         } = parameters;
-        const heightMap = generateHeightMap(parameters);
+        const { result: heightMap } = generateHeightMap(parameters);
         const vertices = new Float32Array(
             (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1) * 3,
         );
@@ -500,6 +513,8 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
         const colors = new Float32Array(
             (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1) * 3,
         );
+        const chunkOffsetX = chunkX * CHUNK_WIDTH;
+        const chunkOffsetZ = chunkZ * CHUNK_WIDTH;
 
         let p = 0;
         let p2 = 0;
@@ -525,11 +540,11 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
                 normalY *= scale;
                 normalZ *= scale;
                 normals[p] = normalX;
-                vertices[p++] = x;
+                vertices[p++] = x + chunkOffsetX;
                 normals[p] = normalY;
                 vertices[p++] = height;
                 normals[p] = normalZ;
-                vertices[p++] = z;
+                vertices[p++] = z + chunkOffsetZ;
             }
         }
 
@@ -593,11 +608,20 @@ function ChunkWorkerFactory(exports: ChunkWorkerExports): void {
         }
 
         return {
-            heightMap,
-            vertices,
-            normals,
-            indices,
-            colors,
+            result: {
+                heightMap,
+                vertices,
+                normals,
+                indices,
+                colors,
+            },
+            transferList: [
+                heightMap.buffer,
+                vertices.buffer,
+                normals.buffer,
+                indices.buffer,
+                colors.buffer,
+            ],
         };
     }
 

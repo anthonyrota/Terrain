@@ -114,7 +114,7 @@ export class FirstPersonCamera extends Disposable {
         return this._lookAtMatrix;
     }
     public get projectionMatrix(): mat4 {
-        return this.projectionMatrix;
+        return this._projectionMatrix;
     }
     public get frustum(): Frustum {
         return this._frustum;
@@ -232,8 +232,8 @@ export class FirstPersonCamera extends Disposable {
         this._rotation[0] += e.movementY * this._sensitivity;
         this._rotation[1] -= e.movementX * this._sensitivity;
         this._rotation[0] = Math.max(
-            Math.min(this._rotation[0], Math.PI - 0.01),
-            -Math.PI + 0.01,
+            Math.min(this._rotation[0], Math.PI / 2 - 0.01),
+            -Math.PI / 2 + 0.01,
         );
     }
 

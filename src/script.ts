@@ -1,54 +1,56 @@
+import { vec3, vec4 } from 'gl-matrix';
 import {
-    chunkWorker,
     ChunkColorRegion,
-    ChunkWorkerMethod,
     ChunkHeightMapGenerationGeneralParameters,
-} from './Chunk';
-import { Disposable } from './Disposable';
+} from './chunkWorker';
 import { FirstPersonCamera } from './FirstPersonCamera';
+import * as glUtil from './glUtil';
 import { ChunkPosition } from './LazyChunkLoader';
 import { Terrain } from './Terrain';
+import { makeTerrainShader } from './terrainShader';
 import { toRadians } from './toRadians';
 
 const canvas = document.querySelector('.canvas') as HTMLCanvasElement;
+const gl =
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    canvas.getContext('webgl') ||
+    (canvas.getContext('experimental-webgl') as WebGLRenderingContext);
 
-const PIXEL_SIZE = 1;
-
-const CHUNK_SIZE = 256;
+const CHUNK_SIZE = 200;
 const MAX_HEIGHT = 256;
 
-canvas.width = (CHUNK_SIZE + 1) * PIXEL_SIZE;
-canvas.height = (CHUNK_SIZE + 1) * PIXEL_SIZE;
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
 const blend = 0.6;
 const colorRegions: ChunkColorRegion[] = [
     {
-        maxHeight: 1.25 / 7,
+        maxHeight: 0.65 / 7,
         color: [201 / 255, 178 / 255, 99 / 255],
         blend,
     },
     {
-        maxHeight: 1.75 / 7,
+        maxHeight: 1.15 / 7,
         color: [164 / 255, 155 / 255, 98 / 255],
         blend,
     },
     {
-        maxHeight: 2.2 / 7,
+        maxHeight: 1.7 / 7,
         color: [164 / 255, 155 / 255, 98 / 255],
         blend,
     },
     {
-        maxHeight: 3 / 7,
+        maxHeight: 2.6 / 7,
         color: [229 / 255, 219 / 255, 164 / 255],
         blend,
     },
     {
-        maxHeight: 4.5 / 7,
+        maxHeight: 4 / 7,
         color: [135 / 255, 184 / 255, 82 / 255],
         blend,
     },
     {
-        maxHeight: 5.6 / 7,
+        maxHeight: 5.5 / 7,
         color: [120 / 255, 120 / 255, 120 / 255],
         blend,
     },
@@ -59,9 +61,12 @@ const colorRegions: ChunkColorRegion[] = [
     },
 ];
 
+const playerHeight = 10;
+
 function getCanCameraJump(): boolean {
     return (
-        camera.y <= terrain.getHeightAtPlayerPosition(camera.x, camera.z) + 0.2
+        camera.y - playerHeight <=
+        terrain.getHeightAtPlayerPosition(camera.x, camera.z) + 0.2
     );
 }
 
@@ -73,7 +78,7 @@ const camera = new FirstPersonCamera({
     gravity: 600,
     horizontalDrag: 0.8 / 1000,
     fov: toRadians(75),
-    sensitivity: 180 / 600,
+    sensitivity: 180 / 50000,
     aspect: canvas.width / canvas.height,
     near: 0.1,
     far: 500,
@@ -85,19 +90,20 @@ const chunkHeightMapGenerationGeneralParameters: ChunkHeightMapGenerationGeneral
     CHUNK_WIDTH: CHUNK_SIZE,
     CHUNK_DEPTH: CHUNK_SIZE,
     MAX_HEIGHT,
-    OCTAVES: 4,
-    PERSISTENCE: 0.4,
+    OCTAVES: 5,
+    PERSISTENCE: 0.25,
     LACUNARITY: 3,
-    FINENESS: 100,
+    FINENESS: 250,
+    NOISE_SLOPE: 0.84,
     erosionParameters: {
-        DROPS_PER_CELL: 0.75,
-        EROSION_RATE: 0.04,
-        DEPOSITION_RATE: 0.03,
+        DROPS_PER_CELL: 1,
+        EROSION_RATE: 0.1,
+        DEPOSITION_RATE: 0.085,
         SPEED: 0.15,
         FRICTION: 0.7,
-        RADIUS: 0.8,
+        RADIUS: 2,
         MAX_RAIN_ITERATIONS: 800,
-        ITERATION_SCALE: 0.04,
+        ITERATION_SCALE: 0.08,
     },
 };
 
@@ -111,17 +117,19 @@ const terrain = new Terrain({
         };
     },
     renderDistance: Math.ceil(camera.far / CHUNK_SIZE),
+    gl,
 });
 
 function resize(): void {
-    // canvas.width = window.innerWidth;
-    // canvas.height = window.innerHeight;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     camera.aspect = canvas.width / canvas.height;
 }
 
+const terrainShader = makeTerrainShader(gl);
+
 resize();
 window.addEventListener('resize', resize);
-
 let lastTime = performance.now();
 function loop(): void {
     const now = performance.now();
@@ -130,52 +138,29 @@ function loop(): void {
     camera.update(dt);
     terrain.update(dt);
     const terrainHeight = terrain.getHeightAtPlayerPosition(camera.x, camera.z);
-    if (camera.y < terrainHeight) {
-        camera.y = terrainHeight;
+    if (camera.y - playerHeight < terrainHeight) {
+        camera.y = terrainHeight + playerHeight;
     }
-    setTimeout(loop, 100);
+    glUtil.clear(gl, vec4.fromValues(1, 1, 1, 1));
+    terrainShader.render({
+        clippingPlane: vec4.create(),
+        isUsingClippingPlane: false,
+        cameraProjectionMatrix: camera.projectionMatrix,
+        cameraViewMatrix: camera.lookAtMatrix,
+        cameraPosition: vec3.fromValues(camera.x, camera.y, camera.z),
+        ambientColor: vec3.fromValues(0.4, 0.4, 0.4),
+        diffuseColor: vec3.fromValues(0.9, 0.9, 0.84),
+        lightDirection: vec3.normalize(
+            vec3.create(),
+            vec3.fromValues(0, 1.6, 1.48),
+        ),
+        fogDistance: camera.far,
+        fogPower: 1.8,
+        fogColor: vec3.fromValues(1, 1, 1),
+        terrainChunks: terrain.getVisibleLoadedChunks(camera.frustum),
+        specularReflectivity: 0.3,
+        shineDamping: 10,
+    });
+    requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-
-chunkWorker
-    .execute(
-        ChunkWorkerMethod.GENERATE_CHUNK_DATA,
-        [
-            {
-                ...chunkHeightMapGenerationGeneralParameters,
-                chunkX: 0,
-                chunkZ: 0,
-                colorRegions,
-            },
-        ],
-        new Disposable(),
-    )
-    .then(({ colors }) => {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        const context = canvas.getContext('2d')!;
-        const imageData = context.createImageData(canvas.width, canvas.height);
-        const pixels = imageData.data;
-        for (let x = 0; x <= CHUNK_SIZE; x++) {
-            for (let z = 0; z <= CHUNK_SIZE; z++) {
-                const colorR = 255 * colors[(z * (CHUNK_SIZE + 1) + x) * 3];
-                const colorG = 255 * colors[(z * (CHUNK_SIZE + 1) + x) * 3 + 1];
-                const colorB = 255 * colors[(z * (CHUNK_SIZE + 1) + x) * 3 + 2];
-                for (let xOffset = 0; xOffset < PIXEL_SIZE; xOffset++) {
-                    for (let zOffset = 0; zOffset < PIXEL_SIZE; zOffset++) {
-                        const pointer =
-                            ((z * PIXEL_SIZE + zOffset) *
-                                (CHUNK_SIZE + 1) *
-                                PIXEL_SIZE +
-                                (x * PIXEL_SIZE + xOffset)) *
-                            4;
-                        pixels[pointer] = colorR;
-                        pixels[pointer + 1] = colorG;
-                        pixels[pointer + 2] = colorB;
-                        pixels[pointer + 3] = 255;
-                    }
-                }
-            }
-        }
-        context.putImageData(imageData, 0, 0);
-    })
-    .catch(console.error);

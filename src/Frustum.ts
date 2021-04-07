@@ -65,7 +65,7 @@ export class Frustum {
                 plane[1] * boxMinMax[py][1] +
                 plane[2] * boxMinMax[pz][2];
 
-            if (dp < -plane[3] - 0.2) {
+            if (dp < -plane[3]) {
                 return false;
             }
         }
