@@ -16,8 +16,9 @@ const gl =
     canvas.getContext('webgl') ||
     (canvas.getContext('experimental-webgl') as WebGLRenderingContext);
 
-const CHUNK_SIZE = 200;
-const MAX_HEIGHT = 256;
+if (!gl.getExtension('OES_element_index_uint')) {
+    throw new Error('Large WebGL indices not supported.');
+}
 
 canvas.width = window.innerWidth;
 canvas.height = window.innerHeight;
@@ -81,22 +82,23 @@ const camera = new FirstPersonCamera({
     sensitivity: 180 / 50000,
     aspect: canvas.width / canvas.height,
     near: 0.1,
-    far: 500,
+    far: 1450,
     getCanJump: getCanCameraJump,
 });
 
+const CHUNK_SIZE = 1024;
 // eslint-disable-next-line max-len
 const chunkHeightMapGenerationGeneralParameters: ChunkHeightMapGenerationGeneralParameters = {
     CHUNK_WIDTH: CHUNK_SIZE,
     CHUNK_DEPTH: CHUNK_SIZE,
-    MAX_HEIGHT,
+    MAX_HEIGHT: 1000,
     OCTAVES: 5,
     PERSISTENCE: 0.25,
-    LACUNARITY: 3,
-    FINENESS: 250,
+    LACUNARITY: 2.5,
+    FINENESS: 900,
     NOISE_SLOPE: 0.84,
     erosionParameters: {
-        DROPS_PER_CELL: 1,
+        DROPS_PER_CELL: 0.75,
         EROSION_RATE: 0.1,
         DEPOSITION_RATE: 0.085,
         SPEED: 0.15,
@@ -148,8 +150,11 @@ function loop(): void {
         cameraProjectionMatrix: camera.projectionMatrix,
         cameraViewMatrix: camera.lookAtMatrix,
         cameraPosition: vec3.fromValues(camera.x, camera.y, camera.z),
-        ambientColor: vec3.fromValues(0.4, 0.4, 0.4),
-        diffuseColor: vec3.fromValues(0.9, 0.9, 0.84),
+        ambientColor: vec3.fromValues(0.7, 0.7, 0.7),
+        diffuseColor: vec3.normalize(
+            vec3.create(),
+            vec3.fromValues(0.4, 0.4, 0.54),
+        ),
         lightDirection: vec3.normalize(
             vec3.create(),
             vec3.fromValues(0, 1.6, 1.48),
@@ -158,7 +163,7 @@ function loop(): void {
         fogPower: 1.8,
         fogColor: vec3.fromValues(1, 1, 1),
         terrainChunks: terrain.getVisibleLoadedChunks(camera.frustum),
-        specularReflectivity: 0.3,
+        specularReflectivity: 0.6,
         shineDamping: 10,
     });
     requestAnimationFrame(loop);

@@ -45,7 +45,7 @@ export interface ChunkData {
     heightMap: Float32Array;
     vertices: Float32Array;
     normals: Float32Array;
-    indices: Uint16Array;
+    indices: Uint32Array;
     colors: Float32Array;
 }
 
@@ -509,7 +509,7 @@ function ChunkWorkerFactory(
         const normals = new Float32Array(
             (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1) * 3,
         );
-        const indices = new Uint16Array(CHUNK_WIDTH * CHUNK_DEPTH * 6);
+        const indices = new Uint32Array(CHUNK_WIDTH * CHUNK_DEPTH * 6);
         const colors = new Float32Array(
             (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1) * 3,
         );
@@ -529,10 +529,24 @@ function ChunkWorkerFactory(
                     z === CHUNK_DEPTH
                         ? height
                         : heightMap[p2 + (CHUNK_WIDTH + 1)];
+                const topLeft =
+                    x === 0
+                        ? top
+                        : z === 0
+                        ? left
+                        : heightMap[p2 - 1 - (CHUNK_WIDTH + 1)];
+                const bottomRight =
+                    x === CHUNK_WIDTH
+                        ? bottom
+                        : z === CHUNK_DEPTH
+                        ? right
+                        : heightMap[p2 + 1 + (CHUNK_WIDTH + 1)];
                 p2++;
-                let normalX = left - right;
-                let normalY = 2;
-                let normalZ = top - bottom;
+                let normalX =
+                    2 * (left - right) - bottomRight + topLeft + bottom - top;
+                let normalY = 6;
+                let normalZ =
+                    2 * (top - bottom) + bottomRight + topLeft - bottom - left;
                 const lengthSquared =
                     normalX ** 2 + normalY ** 2 + normalZ ** 2;
                 const scale = 1 / Math.sqrt(lengthSquared);

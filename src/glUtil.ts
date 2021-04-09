@@ -96,7 +96,7 @@ export function createStaticArrayBuffer(
 
 export function createStaticElementArrayBuffer(
     gl: WebGLRenderingContext,
-    data: Uint16Array,
+    data: Uint32Array,
 ): WebGLBuffer {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const buffer = gl.createBuffer()!;
@@ -124,5 +124,5 @@ export function setIndicesArrayBuffer(
 }
 
 export function drawTriangles(gl: WebGLRenderingContext, count: number): void {
-    gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_SHORT, 0);
+    gl.drawElements(gl.TRIANGLES, count, gl.UNSIGNED_INT, 0);
 }

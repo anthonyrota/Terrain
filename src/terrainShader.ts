@@ -12,6 +12,22 @@ const vertexSource = `
   uniform mat4 uViewMatrix;
   uniform mat4 uProjMatrix;
   
+  varying vec3 vVertexPosition;
+  varying vec3 vVertexNormal;
+  varying vec3 vVertexColor;
+  
+  void main(void) {
+    vVertexPosition = aVertexPosition;
+    vVertexNormal = aVertexNormal;
+    vVertexColor = aVertexColor;
+    
+    gl_Position = uProjMatrix * uViewMatrix * vec4(aVertexPosition, 1.0);
+  }
+`;
+
+const fragmentSource = `
+  precision highp float;
+  
   uniform vec3 uLightDirection;
   uniform vec3 uAmbientColor;
   uniform vec3 uDiffuseColor;
@@ -22,11 +38,15 @@ const vertexSource = `
   
   uniform vec3 uCameraPosition;
   
-  varying vec4 vVertexColor;
-  varying vec3 vVertexPosition;
-  
   uniform float uSpecularReflectivity;
   uniform float uShineDamping;
+  
+  uniform vec4 uClippingPlane;
+  uniform bool uUseClippingPlane;
+  
+  varying vec3 vVertexPosition;
+  varying vec3 vVertexNormal;
+  varying vec3 vVertexColor;
   
   vec3 calculateSpecularLighting(vec3 toCameraVector, vec3 toLightVector, vec3 normal) {
     vec3 reflectedLightDirection = reflect(-toLightVector, normal);
@@ -44,39 +64,23 @@ const vertexSource = `
   }
   
   void main(void) {
-    vec3 toCameraVector = normalize(uCameraPosition - aVertexPosition);
-    vec3 toLightVector = uLightDirection;
-    
-    vec3 specularLighting = calculateSpecularLighting(toCameraVector, toLightVector, aVertexNormal);
-    vec3 diffuseLighting = calculateDiffuseLighting(toLightVector, aVertexNormal);
-    
-    vec3 vertexColor = aVertexColor * (uAmbientColor + diffuseLighting + specularLighting);
-    
-    float distanceToCamera = length(uCameraPosition - aVertexPosition);
-    float fogFactor = clamp(1.0 - pow(distanceToCamera / uFogDistance, uFogPower), 0.0, 1.0);
-    
-    vVertexColor = vec4(mix(uFogColor, vertexColor, fogFactor), 1.0);
-    vVertexPosition = aVertexPosition;
-    
-    gl_Position = uProjMatrix * uViewMatrix * vec4(aVertexPosition, 1.0);
-  }
-`;
-
-const fragmentSource = `
-  precision highp float;
-  
-  uniform vec4 uClippingPlane;
-  uniform bool uUseClippingPlane;
-  
-  varying vec4 vVertexColor;
-  varying vec3 vVertexPosition;
-  
-  void main(void) {
     if (uUseClippingPlane && dot(vec4(vVertexPosition, 1.0), uClippingPlane) < 0.0) {
       discard;
     }
+
+    vec3 toCameraVector = normalize(uCameraPosition - vVertexPosition);
+    vec3 toLightVector = uLightDirection;
     
-    gl_FragColor = vVertexColor;
+    vec3 normal = normalize(vVertexNormal);
+    vec3 specularLighting = calculateSpecularLighting(toCameraVector, toLightVector, normal);
+    vec3 diffuseLighting = calculateDiffuseLighting(toLightVector, normal);
+    
+    vec3 vertexColor = vVertexColor * (uAmbientColor + (diffuseLighting + specularLighting)/4.0);
+    
+    float distanceToCamera = length(uCameraPosition - vVertexPosition);
+    float fogFactor = clamp(1.0 - pow(distanceToCamera / uFogDistance, uFogPower), 0.0, 1.0);
+    
+    gl_FragColor = vec4(mix(uFogColor, vertexColor, fogFactor), 1.0);
   }
 `;
 
