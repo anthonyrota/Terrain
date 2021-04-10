@@ -13,7 +13,7 @@ import { toRadians } from './toRadians';
 const canvas = document.querySelector('.canvas') as HTMLCanvasElement;
 const gl =
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    canvas.getContext('webgl') ||
+    canvas.getContext('webgl', { antialias: true }) ||
     (canvas.getContext('experimental-webgl') as WebGLRenderingContext);
 
 if (!gl.getExtension('OES_element_index_uint')) {
@@ -86,7 +86,7 @@ const camera = new FirstPersonCamera({
     getCanJump: getCanCameraJump,
 });
 
-const CHUNK_SIZE = 1024;
+const CHUNK_SIZE = 256;
 // eslint-disable-next-line max-len
 const chunkHeightMapGenerationGeneralParameters: ChunkHeightMapGenerationGeneralParameters = {
     CHUNK_WIDTH: CHUNK_SIZE,
@@ -125,6 +125,8 @@ const terrain = new Terrain({
     },
     renderDistance: Math.ceil(camera.far / CHUNK_SIZE),
     gl,
+    seed: Math.random(),
+    workerCount: navigator.hardwareConcurrency || 4,
 });
 
 function resize(): void {

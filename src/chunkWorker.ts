@@ -1,3 +1,4 @@
+import { Disposable } from './Disposable';
 import { WorkerFactoryExports, WorkerMethodMap } from './workerize';
 import { WorkerPool } from './WorkerPool';
 
@@ -145,6 +146,11 @@ function ChunkWorkerFactory(
         let currentSeed: number;
 
         function seedNoise(seed: number): { result: undefined } {
+            if (seed > 0 && seed < 1) {
+                // Scale the seed out
+                seed *= 65536;
+            }
+
             seed = Math.floor(seed);
             if (seed < 256) {
                 seed |= seed << 8;
@@ -173,7 +179,7 @@ function ChunkWorkerFactory(
             return currentSeed;
         }
 
-        seedNoise(1232);
+        seedNoise(0);
 
         const F2 = 0.5 * (Math.sqrt(3) - 1);
         const G2 = (3 - Math.sqrt(3)) / 6;
@@ -816,9 +822,30 @@ function ChunkWorkerFactory(
     exports.generateChunkData = generateChunkData;
 }
 
-const chunkWorker = new WorkerPool<ChunkWorkerExports, `${ChunkWorkerMethod}`>(
-    ChunkWorkerFactory,
-    navigator.hardwareConcurrency,
-);
+export interface ChunkWorkerParameters {
+    seed: number;
+    workerCount: number;
+}
 
-export { chunkWorker };
+export type ChunkWorker = WorkerPool<
+    ChunkWorkerExports,
+    `${ChunkWorkerMethod}`
+>;
+
+export function createChunkWorker(
+    parameters: ChunkWorkerParameters,
+): ChunkWorker {
+    const { seed, workerCount } = parameters;
+    const chunkWorker: ChunkWorker = new WorkerPool(
+        ChunkWorkerFactory,
+        workerCount,
+    );
+    for (let i = 0; i < workerCount; i++) {
+        void chunkWorker.execute(
+            ChunkWorkerMethod.SEED_NOISE,
+            [seed],
+            new Disposable(),
+        );
+    }
+    return chunkWorker;
+}

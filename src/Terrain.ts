@@ -5,8 +5,9 @@ import {
     ChunkData,
     ChunkGenerationParameters,
     ChunkHeightMapGenerationGeneralParameters,
-    chunkWorker,
     ChunkWorkerMethod,
+    ChunkWorker,
+    createChunkWorker,
 } from './chunkWorker';
 import { Disposable } from './Disposable';
 import { Frustum } from './Frustum';
@@ -27,6 +28,8 @@ interface TerrainParameters {
     renderDistance: number;
     getPlayerChunkPosition: () => ChunkPosition;
     gl: WebGLRenderingContext;
+    seed: number;
+    workerCount: number;
 }
 
 export class Terrain extends Disposable {
@@ -38,6 +41,7 @@ export class Terrain extends Disposable {
     private _gl: WebGLRenderingContext;
     private _chunkLoader: LazyChunkLoader;
     private _chunks = new Map<SerializedChunkPosition, TerrainChunk | null>();
+    private _chunkWorker: ChunkWorker;
 
     constructor(parameters: TerrainParameters) {
         super();
@@ -47,6 +51,10 @@ export class Terrain extends Disposable {
         this._renderDistance = parameters.renderDistance;
         this._getPlayerChunkPosition = parameters.getPlayerChunkPosition;
         this._gl = parameters.gl;
+        this._chunkWorker = createChunkWorker({
+            seed: parameters.seed,
+            workerCount: parameters.workerCount,
+        });
         const chunkLoaderActions: LazyChunkLoaderActions = {
             loadChunk: (chunkPosition) => this._loadChunk(chunkPosition),
             setChunkLoadingPriority: () => {},
@@ -118,7 +126,7 @@ export class Terrain extends Disposable {
             chunkZ,
             colorRegions: this._colorRegions,
         };
-        chunkWorker
+        this._chunkWorker
             .execute(
                 ChunkWorkerMethod.GENERATE_CHUNK_DATA,
                 [parameters],
