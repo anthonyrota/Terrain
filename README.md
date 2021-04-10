@@ -1,7 +1,7 @@
 # Procedural Terrain
 
-#### TODO
+## TODO
 
-- [ ] Fix seams
+- [x] Fix seams
 - [ ] Water
 - [ ] Flying

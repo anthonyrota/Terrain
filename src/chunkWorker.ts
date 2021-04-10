@@ -10,6 +10,11 @@ export interface ChunkHeightMapGenerationErosionParameters {
     RADIUS: number;
     MAX_RAIN_ITERATIONS: number;
     ITERATION_SCALE: number;
+    OCEAN_HEIGHT: number;
+    OCEAN_SLOWDOWN: number;
+    EDGE_DAMP_MIN_DISTANCE: number;
+    EDGE_DAMP_MAX_DISTANCE: number;
+    EDGE_DAMP_STRENGTH: number;
 }
 
 export interface ChunkHeightMapGenerationGeneralParameters {
@@ -232,6 +237,52 @@ function ChunkWorkerFactory(
         };
     })();
 
+    function calculateMaxPossibleNoiseValue(
+        OCTAVES: number,
+        PERSISTENCE: number,
+    ): number {
+        let maxPossibleNoiseValue = 0;
+        let amplitude = 1;
+        for (let k = 0; k < OCTAVES; k++) {
+            maxPossibleNoiseValue += amplitude;
+            amplitude *= PERSISTENCE;
+        }
+        return maxPossibleNoiseValue;
+    }
+
+    function calculateNoiseHeight(
+        x: number,
+        z: number,
+        MAX_HEIGHT: number,
+        OCTAVES: number,
+        PERSISTENCE: number,
+        LACUNARITY: number,
+        FINENESS: number,
+        NOISE_SLOPE: number,
+        maxPossibleNoiseValue: number,
+    ): number {
+        const noiseX = x / FINENESS;
+        const noiseZ = z / FINENESS;
+        let amplitude = 1;
+        let frequency = 1;
+        let accumulatedNoiseValue = 0;
+        for (let i = 0; i < OCTAVES; i++) {
+            const sampleX = noiseX * frequency;
+            const sampleZ = noiseZ * frequency;
+            // simplex2 has range [-1, 1] so add 1 to make range [0, 2]
+            // then divide by 2 to make range [0, 1]
+            const noiseValue = (1 + simplex2(sampleX, sampleZ)) / 2;
+            accumulatedNoiseValue +=
+                Math.pow(noiseValue, NOISE_SLOPE) * amplitude;
+            amplitude *= PERSISTENCE;
+            frequency *= LACUNARITY;
+        }
+        // Map to [0, 1]
+        const normalizedAccumulatedNoiseValue =
+            accumulatedNoiseValue / maxPossibleNoiseValue;
+        return normalizedAccumulatedNoiseValue * MAX_HEIGHT;
+    }
+
     function generateHeightMap(
         parameters: ChunkHeightMapGenerationParameters,
     ): { result: Float32Array; transferList: Transferable[] } {
@@ -257,7 +308,13 @@ function ChunkWorkerFactory(
             RADIUS,
             MAX_RAIN_ITERATIONS,
             ITERATION_SCALE,
+            OCEAN_HEIGHT,
+            OCEAN_SLOWDOWN,
+            EDGE_DAMP_MIN_DISTANCE,
+            EDGE_DAMP_MAX_DISTANCE,
+            EDGE_DAMP_STRENGTH,
         } = erosionParameters;
+
         // For example if width=2, depth=2 then we generate:
         // * * *
         // * * *
@@ -268,38 +325,25 @@ function ChunkWorkerFactory(
             (CHUNK_WIDTH + 1) * (CHUNK_DEPTH + 1),
         );
 
-        let maxPossibleNoiseValue = 0;
-        let amplitude = 1;
-        for (let k = 0; k < OCTAVES; k++) {
-            maxPossibleNoiseValue += amplitude;
-            amplitude *= PERSISTENCE;
-        }
-
+        const maxPossibleNoiseValue = calculateMaxPossibleNoiseValue(
+            OCTAVES,
+            PERSISTENCE,
+        );
         for (let i = 0; i <= CHUNK_WIDTH; i++) {
             for (let j = 0; j <= CHUNK_DEPTH; j++) {
                 const x = chunkX * CHUNK_WIDTH + i;
                 const z = chunkZ * CHUNK_DEPTH + j;
-                const noiseX = x / FINENESS;
-                const noiseZ = z / FINENESS;
-                let amplitude = 1;
-                let frequency = 1;
-                let accumulatedNoiseValue = 0;
-                for (let i = 0; i < OCTAVES; i++) {
-                    const sampleX = noiseX * frequency;
-                    const sampleZ = noiseZ * frequency;
-                    // simplex2 has range [-1, 1] so add 1 to make range [0, 2]
-                    // then divide by 2 to make range [0, 1]
-                    const noiseValue = (1 + simplex2(sampleX, sampleZ)) / 2;
-                    accumulatedNoiseValue +=
-                        Math.pow(noiseValue, NOISE_SLOPE) * amplitude;
-                    amplitude *= PERSISTENCE;
-                    frequency *= LACUNARITY;
-                }
-                // Map to [0, 1]
-                const normalizedAccumulatedNoiseValue =
-                    accumulatedNoiseValue / maxPossibleNoiseValue;
-                const height = normalizedAccumulatedNoiseValue * MAX_HEIGHT;
-                heightMap[j * (CHUNK_WIDTH + 1) + i] = height;
+                heightMap[j * (CHUNK_WIDTH + 1) + i] = calculateNoiseHeight(
+                    x,
+                    z,
+                    MAX_HEIGHT,
+                    OCTAVES,
+                    PERSISTENCE,
+                    LACUNARITY,
+                    FINENESS,
+                    NOISE_SLOPE,
+                    maxPossibleNoiseValue,
+                );
             }
         }
 
@@ -364,21 +408,55 @@ function ChunkWorkerFactory(
             const floorX = Math.floor(x);
             const floorZ = Math.floor(z);
 
-            if (floorX >= CHUNK_WIDTH || floorZ >= CHUNK_DEPTH) {
+            if (floorX > CHUNK_WIDTH || floorZ > CHUNK_DEPTH) {
                 return;
             }
 
             const gridOffsetX = x - floorX;
             const gridOffsetZ = z - floorZ;
 
-            heightMap[floorZ * (CHUNK_WIDTH + 1) + floorX] +=
-                gridOffsetX * gridOffsetZ * amount;
-            heightMap[floorZ * (CHUNK_WIDTH + 1) + (floorX + 1)] +=
-                (1 - gridOffsetX) * gridOffsetZ * amount;
-            heightMap[(floorZ + 1) * (CHUNK_WIDTH + 1) + floorX] +=
-                gridOffsetX * (1 - gridOffsetZ) * amount;
-            heightMap[(floorZ + 1) * (CHUNK_WIDTH + 1) + (floorX + 1)] +=
-                (1 - gridOffsetX) * (1 - gridOffsetZ) * amount;
+            const tl = floorZ * (CHUNK_WIDTH + 1) + floorX;
+            const tr = floorZ * (CHUNK_WIDTH + 1) + (floorX + 1);
+            const bl = (floorZ + 1) * (CHUNK_WIDTH + 1) + floorX;
+            const br = (floorZ + 1) * (CHUNK_WIDTH + 1) + (floorX + 1);
+
+            heightMap[tl] = Math.max(
+                0,
+                Math.min(
+                    MAX_HEIGHT,
+                    heightMap[tl] + gridOffsetX * gridOffsetZ * amount,
+                ),
+            );
+            if (floorX !== CHUNK_WIDTH) {
+                heightMap[tr] = Math.max(
+                    0,
+                    Math.min(
+                        MAX_HEIGHT,
+                        heightMap[tr] +
+                            (1 - gridOffsetX) * gridOffsetZ * amount,
+                    ),
+                );
+                if (floorZ !== CHUNK_DEPTH) {
+                    heightMap[br] = Math.max(
+                        0,
+                        Math.min(
+                            MAX_HEIGHT,
+                            heightMap[br] +
+                                (1 - gridOffsetX) * (1 - gridOffsetZ) * amount,
+                        ),
+                    );
+                }
+            }
+            if (floorZ !== CHUNK_DEPTH) {
+                heightMap[bl] = Math.max(
+                    0,
+                    Math.min(
+                        MAX_HEIGHT,
+                        heightMap[bl] +
+                            gridOffsetX * (1 - gridOffsetZ) * amount,
+                    ),
+                );
+            }
         }
 
         function blurHeightMap(): void {
@@ -426,23 +504,21 @@ function ChunkWorkerFactory(
             let velocityZ = 0;
 
             for (let i = 0; i < MAX_RAIN_ITERATIONS; i++) {
-                const left = getInterpolatedHeight(
-                    x + offsetX - 1,
-                    z + offsetZ,
-                );
-                const top = getInterpolatedHeight(x + offsetX, z + offsetZ - 1);
-                const right = getInterpolatedHeight(
-                    x + offsetX + 1,
-                    z + offsetZ,
-                );
-                const bottom = getInterpolatedHeight(
-                    x + offsetX,
-                    z + offsetZ + 1,
-                );
+                const curX = x + offsetX;
+                const curZ = z + offsetZ;
+                const curY = getInterpolatedHeight(curX, curZ);
+                const left = getInterpolatedHeight(curX - 1, curZ);
+                const top = getInterpolatedHeight(curX, curZ - 1);
+                const right = getInterpolatedHeight(curX + 1, curZ);
+                const bottom = getInterpolatedHeight(curX, curZ + 1);
+                const topLeft = getInterpolatedHeight(curX - 1, curZ - 1);
+                const bottomRight = getInterpolatedHeight(curX + 1, curZ + 1);
 
-                let normalX = left - right;
-                let normalY = 2;
-                let normalZ = top - bottom;
+                let normalX =
+                    2 * (left - right) - bottomRight + topLeft + bottom - top;
+                let normalY = 6;
+                let normalZ =
+                    2 * (top - bottom) + bottomRight + topLeft - bottom - left;
 
                 const lengthSquared =
                     normalX ** 2 + normalY ** 2 + normalZ ** 2;
@@ -461,15 +537,38 @@ function ChunkWorkerFactory(
                     (1 - normalY) *
                     Math.min(1, i * ITERATION_SCALE);
 
-                changeInterpolatedHeight(
+                const distanceToEdge = Math.min(
                     previousX,
                     previousZ,
-                    deposit - erosion,
+                    CHUNK_WIDTH - previousX,
+                    CHUNK_DEPTH - previousZ,
                 );
+                if (distanceToEdge > EDGE_DAMP_MIN_DISTANCE) {
+                    const dampFactor =
+                        distanceToEdge <= EDGE_DAMP_MAX_DISTANCE
+                            ? Math.pow(
+                                  (distanceToEdge - EDGE_DAMP_MIN_DISTANCE) /
+                                      (EDGE_DAMP_MAX_DISTANCE -
+                                          EDGE_DAMP_MIN_DISTANCE),
+                                  EDGE_DAMP_STRENGTH,
+                              )
+                            : 1;
+                    changeInterpolatedHeight(
+                        previousX,
+                        previousZ,
+                        (deposit - erosion) * dampFactor,
+                    );
+                }
                 sediment += erosion - deposit;
 
                 velocityX = FRICTION * velocityX + normalX * SPEED;
                 velocityZ = FRICTION * velocityZ + normalZ * SPEED;
+                const waterSlowdownFactor =
+                    (Math.min(OCEAN_HEIGHT * MAX_HEIGHT, curY) /
+                        (OCEAN_HEIGHT * MAX_HEIGHT)) **
+                    OCEAN_SLOWDOWN;
+                velocityX *= waterSlowdownFactor;
+                velocityZ *= waterSlowdownFactor;
                 previousX = x;
                 previousZ = z;
                 x += velocityX;
@@ -500,6 +599,11 @@ function ChunkWorkerFactory(
             CHUNK_WIDTH,
             CHUNK_DEPTH,
             MAX_HEIGHT,
+            OCTAVES,
+            PERSISTENCE,
+            LACUNARITY,
+            FINENESS,
+            NOISE_SLOPE,
             colorRegions,
         } = parameters;
         const { result: heightMap } = generateHeightMap(parameters);
@@ -518,28 +622,96 @@ function ChunkWorkerFactory(
 
         let p = 0;
         let p2 = 0;
+        const maxPossibleNoiseValue = calculateMaxPossibleNoiseValue(
+            OCTAVES,
+            PERSISTENCE,
+        );
         for (let z = 0; z <= CHUNK_DEPTH; z++) {
             for (let x = 0; x <= CHUNK_WIDTH; x++) {
                 const height = heightMap[p2];
-                const left = x === 0 ? height : heightMap[p2 - 1];
-                const right = x === CHUNK_WIDTH ? height : heightMap[p2 + 1];
+                const left =
+                    x === 0
+                        ? calculateNoiseHeight(
+                              x + chunkOffsetX - 1,
+                              z + chunkOffsetZ,
+                              MAX_HEIGHT,
+                              OCTAVES,
+                              PERSISTENCE,
+                              LACUNARITY,
+                              FINENESS,
+                              NOISE_SLOPE,
+                              maxPossibleNoiseValue,
+                          )
+                        : heightMap[p2 - 1];
+                const right =
+                    x === CHUNK_WIDTH
+                        ? calculateNoiseHeight(
+                              x + chunkOffsetX + 1,
+                              z + chunkOffsetZ,
+                              MAX_HEIGHT,
+                              OCTAVES,
+                              PERSISTENCE,
+                              LACUNARITY,
+                              FINENESS,
+                              NOISE_SLOPE,
+                              maxPossibleNoiseValue,
+                          )
+                        : heightMap[p2 + 1];
                 const top =
-                    z === 0 ? height : heightMap[p2 - (CHUNK_WIDTH + 1)];
+                    z === 0
+                        ? calculateNoiseHeight(
+                              x + chunkOffsetX,
+                              z + chunkOffsetZ - 1,
+                              MAX_HEIGHT,
+                              OCTAVES,
+                              PERSISTENCE,
+                              LACUNARITY,
+                              FINENESS,
+                              NOISE_SLOPE,
+                              maxPossibleNoiseValue,
+                          )
+                        : heightMap[p2 - (CHUNK_WIDTH + 1)];
                 const bottom =
                     z === CHUNK_DEPTH
-                        ? height
+                        ? calculateNoiseHeight(
+                              x + chunkOffsetX,
+                              z + chunkOffsetZ + 1,
+                              MAX_HEIGHT,
+                              OCTAVES,
+                              PERSISTENCE,
+                              LACUNARITY,
+                              FINENESS,
+                              NOISE_SLOPE,
+                              maxPossibleNoiseValue,
+                          )
                         : heightMap[p2 + (CHUNK_WIDTH + 1)];
                 const topLeft =
-                    x === 0
-                        ? top
-                        : z === 0
-                        ? left
+                    x === 0 || z === 0
+                        ? calculateNoiseHeight(
+                              x + chunkOffsetX - 1,
+                              z + chunkOffsetZ - 1,
+                              MAX_HEIGHT,
+                              OCTAVES,
+                              PERSISTENCE,
+                              LACUNARITY,
+                              FINENESS,
+                              NOISE_SLOPE,
+                              maxPossibleNoiseValue,
+                          )
                         : heightMap[p2 - 1 - (CHUNK_WIDTH + 1)];
                 const bottomRight =
-                    x === CHUNK_WIDTH
-                        ? bottom
-                        : z === CHUNK_DEPTH
-                        ? right
+                    x === CHUNK_WIDTH || z === CHUNK_DEPTH
+                        ? calculateNoiseHeight(
+                              x + chunkOffsetX + 1,
+                              z + chunkOffsetZ + 1,
+                              MAX_HEIGHT,
+                              OCTAVES,
+                              PERSISTENCE,
+                              LACUNARITY,
+                              FINENESS,
+                              NOISE_SLOPE,
+                              maxPossibleNoiseValue,
+                          )
                         : heightMap[p2 + 1 + (CHUNK_WIDTH + 1)];
                 p2++;
                 let normalX =
