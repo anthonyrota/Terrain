@@ -71,3 +71,33 @@ export function calculateLocations<
     });
     return locations;
 }
+
+export function loadTexturePower2(
+    gl: WebGL2RenderingContext,
+    src: string,
+): Promise<WebGLTexture> {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const texture = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    const image = new Image();
+    let resolve: (value: WebGLTexture) => void;
+    const promise = new Promise<WebGLTexture>((resolve_) => {
+        resolve = resolve_;
+    });
+    image.onload = (): void => {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.RGBA,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            image,
+        );
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        resolve(texture);
+    };
+    image.src = src;
+    return promise;
+}
