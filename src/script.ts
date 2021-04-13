@@ -4,62 +4,29 @@ import {
     ChunkHeightMapGenerationGeneralParameters,
 } from './chunkWorker';
 import { FirstPersonCamera } from './FirstPersonCamera';
-import * as glUtil from './glUtil';
 import { ChunkPosition } from './LazyChunkLoader';
 import { Terrain } from './Terrain';
 import { makeTerrainShader } from './terrainShader';
 import { toRadians } from './toRadians';
+import { makeWaterShader } from './waterShader';
 
 const canvas = document.querySelector('.canvas') as HTMLCanvasElement;
-const gl =
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    canvas.getContext('webgl', { antialias: true }) ||
-    (canvas.getContext('experimental-webgl') as WebGLRenderingContext);
+// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+const gl = canvas.getContext('webgl2', { antialias: true })!;
 
-if (!gl.getExtension('OES_element_index_uint')) {
-    throw new Error('Large WebGL indices not supported.');
+if (!gl) {
+    throw new Error('WebGL2 not supported.');
 }
-
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
 
 const blend = 0.6;
 const colorRegions: ChunkColorRegion[] = [
-    {
-        maxHeight: 0.65 / 7,
-        color: [201 / 255, 178 / 255, 99 / 255],
-        blend,
-    },
-    {
-        maxHeight: 1.15 / 7,
-        color: [164 / 255, 155 / 255, 98 / 255],
-        blend,
-    },
-    {
-        maxHeight: 1.7 / 7,
-        color: [164 / 255, 155 / 255, 98 / 255],
-        blend,
-    },
-    {
-        maxHeight: 2.6 / 7,
-        color: [229 / 255, 219 / 255, 164 / 255],
-        blend,
-    },
-    {
-        maxHeight: 4 / 7,
-        color: [135 / 255, 184 / 255, 82 / 255],
-        blend,
-    },
-    {
-        maxHeight: 5.5 / 7,
-        color: [120 / 255, 120 / 255, 120 / 255],
-        blend,
-    },
-    {
-        maxHeight: 7 / 7,
-        color: [200 / 255, 200 / 255, 210 / 255],
-        blend,
-    },
+    { maxHeight: 0.65 / 7, color: [201 / 255, 178 / 255, 99 / 255], blend },
+    { maxHeight: 1.15 / 7, color: [164 / 255, 155 / 255, 98 / 255], blend },
+    { maxHeight: 1.7 / 7, color: [164 / 255, 155 / 255, 98 / 255], blend },
+    { maxHeight: 2.6 / 7, color: [229 / 255, 219 / 255, 164 / 255], blend },
+    { maxHeight: 4 / 7, color: [135 / 255, 184 / 255, 82 / 255], blend },
+    { maxHeight: 5.5 / 7, color: [120 / 255, 120 / 255, 120 / 255], blend },
+    { maxHeight: 7 / 7, color: [200 / 255, 200 / 255, 210 / 255], blend },
 ];
 
 const playerHeight = 10;
@@ -73,8 +40,8 @@ function getCanCameraJump(): boolean {
 
 const camera = new FirstPersonCamera({
     canvas,
-    horizontalSpeed: 500,
-    verticalSpeed: 200,
+    horizontalSpeed: 1000,
+    verticalSpeed: 300,
     maxFallSpeed: 600,
     gravity: 600,
     horizontalDrag: 0.8 / 1000,
@@ -82,11 +49,11 @@ const camera = new FirstPersonCamera({
     sensitivity: 180 / 50000,
     aspect: canvas.width / canvas.height,
     near: 0.1,
-    far: 1450,
+    far: 2450,
     getCanJump: getCanCameraJump,
 });
 
-const CHUNK_SIZE = 256;
+const CHUNK_SIZE = 512;
 // eslint-disable-next-line max-len
 const chunkHeightMapGenerationGeneralParameters: ChunkHeightMapGenerationGeneralParameters = {
     CHUNK_WIDTH: CHUNK_SIZE,
@@ -106,13 +73,16 @@ const chunkHeightMapGenerationGeneralParameters: ChunkHeightMapGenerationGeneral
         RADIUS: 0.8,
         MAX_RAIN_ITERATIONS: 800,
         ITERATION_SCALE: 0.04,
-        OCEAN_HEIGHT: 0.15,
+        OCEAN_HEIGHT: 0.37,
         OCEAN_SLOWDOWN: 5,
         EDGE_DAMP_MIN_DISTANCE: 3,
         EDGE_DAMP_MAX_DISTANCE: 10,
         EDGE_DAMP_STRENGTH: 5,
     },
 };
+
+const terrainShader = makeTerrainShader(gl);
+const waterShader = makeWaterShader(gl);
 
 const terrain = new Terrain({
     chunkHeightMapGenerationGeneralParameters,
@@ -125,6 +95,8 @@ const terrain = new Terrain({
     },
     renderDistance: Math.ceil(camera.far / CHUNK_SIZE),
     gl,
+    terrainShaderLocations: terrainShader.locations,
+    waterShaderLocations: waterShader.locations,
     seed: Math.random(),
     workerCount: navigator.hardwareConcurrency || 4,
 });
@@ -134,8 +106,6 @@ function resize(): void {
     canvas.height = window.innerHeight;
     camera.aspect = canvas.width / canvas.height;
 }
-
-const terrainShader = makeTerrainShader(gl);
 
 resize();
 window.addEventListener('resize', resize);
@@ -150,17 +120,23 @@ function loop(): void {
     if (camera.y - playerHeight < terrainHeight) {
         camera.y = terrainHeight + playerHeight;
     }
-    glUtil.clear(gl, vec4.fromValues(1, 1, 1, 1));
+    gl.clearColor(1, 1, 1, 1);
+    gl.clearDepth(1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.enable(gl.CULL_FACE);
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    const terrainChunks = terrain.getVisibleLoadedChunks(camera.frustum);
     terrainShader.render({
         clippingPlane: vec4.create(),
         isUsingClippingPlane: false,
         cameraProjectionMatrix: camera.projectionMatrix,
         cameraViewMatrix: camera.lookAtMatrix,
         cameraPosition: vec3.fromValues(camera.x, camera.y, camera.z),
-        ambientColor: vec3.fromValues(0.7, 0.7, 0.7),
+        ambientColor: vec3.fromValues(0.8, 0.8, 0.8),
         diffuseColor: vec3.normalize(
             vec3.create(),
-            vec3.fromValues(0.4, 0.4, 0.54),
+            vec3.fromValues(0.6, 0.6, 0.74),
         ),
         lightDirection: vec3.normalize(
             vec3.create(),
@@ -169,9 +145,14 @@ function loop(): void {
         fogDistance: camera.far,
         fogPower: 1.8,
         fogColor: vec3.fromValues(1, 1, 1),
-        terrainChunks: terrain.getVisibleLoadedChunks(camera.frustum),
+        terrainChunks,
         specularReflectivity: 0.6,
         shineDamping: 10,
+    });
+    waterShader.render({
+        cameraProjectionMatrix: camera.projectionMatrix,
+        cameraViewMatrix: camera.lookAtMatrix,
+        terrainChunks,
     });
     requestAnimationFrame(loop);
 }

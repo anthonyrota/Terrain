@@ -20,6 +20,7 @@
     ],
     "ignoreRegExpList": [],
     "words": [
+        "glsl",
         "highp",
         "lacunarity",
         "lerp",
