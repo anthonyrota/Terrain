@@ -23,3 +23,8 @@ _ts3.4
 tmp/
 temp/
 public/
+/target
+/pkg
+/crate/pkg
+/crate/target
+/wasm-pack.log

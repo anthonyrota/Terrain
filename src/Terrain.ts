@@ -1,11 +1,4 @@
-import {
-    ChunkColorRegion,
-    ChunkGenerationParameters,
-    ChunkHeightMapGenerationGeneralParameters,
-    ChunkWorkerMethod,
-    ChunkWorker,
-    createChunkWorker,
-} from './chunkWorker';
+import { CHUNK_WIDTH, CHUNK_DEPTH } from './crateConstants';
 import { Disposable } from './Disposable';
 import { Frustum } from './Frustum';
 import {
@@ -17,13 +10,16 @@ import {
 } from './LazyChunkLoader';
 import { TerrainChunk } from './TerrainChunk';
 import { TerrainShaderLocations } from './terrainShader';
+import {
+    GenerateChunkResponse,
+    RequestType,
+    WPRequest,
+    WPResponse,
+} from './terrainWorkerTypes';
 import { WaterShaderLocations } from './waterShader';
-import { ExecutionCanceledError } from './WorkerPool';
+import { ExecutionCanceledError, WorkerPool } from './WorkerPool';
 
 interface TerrainParameters {
-    // eslint-disable-next-line max-len
-    chunkHeightMapGenerationGeneralParameters: ChunkHeightMapGenerationGeneralParameters;
-    colorRegions: ChunkColorRegion[];
     renderDistance: number;
     getPlayerChunkPosition: () => ChunkPosition;
     gl: WebGL2RenderingContext;
@@ -35,8 +31,6 @@ interface TerrainParameters {
 
 export class Terrain extends Disposable {
     // eslint-disable-next-line max-len
-    private _chunkHeightMapGenerationGeneralParameters: ChunkHeightMapGenerationGeneralParameters;
-    private _colorRegions: ChunkColorRegion[];
     private _renderDistance: number;
     private _getPlayerChunkPosition: () => ChunkPosition;
     private _gl: WebGL2RenderingContext;
@@ -44,22 +38,29 @@ export class Terrain extends Disposable {
     private _waterShaderLocations: WaterShaderLocations;
     private _chunkLoader: LazyChunkLoader;
     private _chunks = new Map<SerializedChunkPosition, TerrainChunk | null>();
-    private _chunkWorker: ChunkWorker;
+    private _chunkWorker: WorkerPool<WPRequest, WPResponse>;
 
     constructor(parameters: TerrainParameters) {
         super();
-        this._chunkHeightMapGenerationGeneralParameters =
-            parameters.chunkHeightMapGenerationGeneralParameters;
-        this._colorRegions = parameters.colorRegions;
         this._renderDistance = parameters.renderDistance;
         this._getPlayerChunkPosition = parameters.getPlayerChunkPosition;
         this._gl = parameters.gl;
         this._terrainShaderLocations = parameters.terrainShaderLocations;
         this._waterShaderLocations = parameters.waterShaderLocations;
-        this._chunkWorker = createChunkWorker({
-            seed: parameters.seed,
-            workerCount: parameters.workerCount,
-        });
+        const workerCount = navigator.hardwareConcurrency || 4;
+        this._chunkWorker = new WorkerPool<WPRequest, WPResponse>(
+            () => new Worker(new URL('./terrainWorker.ts', import.meta.url)),
+            workerCount,
+        );
+        for (let i = 0; i < workerCount; i++) {
+            void this._chunkWorker.execute(
+                {
+                    type: RequestType.SetSeed,
+                    seed: parameters.seed,
+                },
+                this,
+            );
+        }
         this.add(this._chunkWorker);
         const chunkLoaderActions: LazyChunkLoaderActions = {
             loadChunk: (chunkPosition) => this._loadChunk(chunkPosition),
@@ -80,10 +81,6 @@ export class Terrain extends Disposable {
     }
 
     public getHeightAtPlayerPosition(x: number, z: number): number {
-        const {
-            CHUNK_WIDTH,
-            CHUNK_DEPTH,
-        } = this._chunkHeightMapGenerationGeneralParameters;
         const chunkX = Math.floor(x / CHUNK_WIDTH);
         const chunkZ = Math.floor(z / CHUNK_DEPTH);
         const chunkPosition: ChunkPosition = { chunkX, chunkZ };
@@ -112,12 +109,6 @@ export class Terrain extends Disposable {
     }
 
     private _loadChunk(chunkPosition: ChunkPosition): Disposable {
-        const {
-            CHUNK_WIDTH,
-            CHUNK_DEPTH,
-            MAX_HEIGHT,
-            erosionParameters,
-        } = this._chunkHeightMapGenerationGeneralParameters;
         const { chunkX, chunkZ } = chunkPosition;
         const serializedChunkPosition = serializeChunkPosition(chunkPosition);
         this._chunks.set(serializedChunkPosition, null);
@@ -132,25 +123,27 @@ export class Terrain extends Disposable {
             chunk.dispose();
             this._chunks.delete(serializedChunkPosition);
         });
-        const parameters: ChunkGenerationParameters = {
-            ...this._chunkHeightMapGenerationGeneralParameters,
+        const request: WPRequest = {
+            type: RequestType.GenerateChunk,
             chunkX,
             chunkZ,
-            colorRegions: this._colorRegions,
         };
         this._chunkWorker
-            .execute(
-                ChunkWorkerMethod.GENERATE_CHUNK_DATA,
-                [parameters],
-                disposable,
-            )
-            .then((chunkData) => {
+            .execute(request, disposable)
+            .then((response) => {
+                const {
+                    heightMap,
+                    vertices,
+                    normals,
+                    colors,
+                    indices,
+                } = response as GenerateChunkResponse;
                 const chunk = new TerrainChunk({
-                    chunkData,
-                    CHUNK_WIDTH,
-                    MAX_HEIGHT,
-                    CHUNK_DEPTH,
-                    WATER_HEIGHT: MAX_HEIGHT * erosionParameters.OCEAN_HEIGHT,
+                    heightMap,
+                    vertices,
+                    normals,
+                    colors,
+                    indices,
                     chunkPosition,
                     gl: this._gl,
                     terrainShaderLocations: this._terrainShaderLocations,

@@ -1,17 +1,22 @@
 import { vec3 } from 'gl-matrix';
 import { Box3 } from './Box3';
-import { ChunkData } from './chunkWorker';
+import {
+    CHUNK_DEPTH,
+    CHUNK_WIDTH,
+    EROSION_OCEAN_HEIGHT,
+    MAX_HEIGHT,
+} from './crateConstants';
 import { Disposable } from './Disposable';
 import { ChunkPosition } from './LazyChunkLoader';
 import { TerrainShaderLocations } from './terrainShader';
 import { WaterShaderLocations } from './waterShader';
 
 export interface TerrainChunkParameters {
-    chunkData: ChunkData;
-    CHUNK_WIDTH: number;
-    CHUNK_DEPTH: number;
-    MAX_HEIGHT: number;
-    WATER_HEIGHT: number;
+    heightMap: Float32Array;
+    vertices: Float32Array;
+    normals: Float32Array;
+    colors: Float32Array;
+    indices: Uint32Array;
     chunkPosition: ChunkPosition;
     gl: WebGL2RenderingContext;
     terrainShaderLocations: TerrainShaderLocations;
@@ -20,8 +25,6 @@ export interface TerrainChunkParameters {
 
 export class TerrainChunk extends Disposable {
     private _heightMap: Float32Array;
-    private _CHUNK_WIDTH: number;
-    private _CHUNK_DEPTH: number;
     private _chunkPosition: ChunkPosition;
     private _indicesCount: number;
     private _boundingBox: Box3;
@@ -57,41 +60,37 @@ export class TerrainChunk extends Disposable {
             this._buffers = null;
         });
         const { gl } = parameters;
-        this._heightMap = parameters.chunkData.heightMap;
-        this._CHUNK_WIDTH = parameters.CHUNK_WIDTH;
-        this._CHUNK_DEPTH = parameters.CHUNK_DEPTH;
+        this._heightMap = parameters.heightMap;
         this._chunkPosition = parameters.chunkPosition;
         this._createVao(
             gl,
-            parameters.chunkData,
+            parameters.vertices,
+            parameters.normals,
+            parameters.colors,
+            parameters.indices,
             parameters.terrainShaderLocations,
         );
-        this._createWaterVao(
-            gl,
-            parameters.WATER_HEIGHT,
-            parameters.waterShaderLocations,
-        );
-        this._indicesCount = parameters.chunkData.indices.length;
+        this._createWaterVao(gl, parameters.waterShaderLocations);
+        this._indicesCount = parameters.indices.length;
         const boxMin = vec3.fromValues(
-            this._chunkPosition.chunkX * this._CHUNK_WIDTH,
+            this._chunkPosition.chunkX * CHUNK_WIDTH,
             0,
-            this._chunkPosition.chunkZ * this._CHUNK_DEPTH,
+            this._chunkPosition.chunkZ * CHUNK_DEPTH,
         );
         const boxMax = vec3.add(
             vec3.create(),
             boxMin,
-            vec3.fromValues(
-                this._CHUNK_WIDTH,
-                parameters.MAX_HEIGHT,
-                this._CHUNK_DEPTH,
-            ),
+            vec3.fromValues(CHUNK_WIDTH, MAX_HEIGHT, CHUNK_DEPTH),
         );
         this._boundingBox = new Box3(boxMin, boxMax);
     }
 
     private _createVao(
         gl: WebGL2RenderingContext,
-        chunkData: ChunkData,
+        vertices: Float32Array,
+        normals: Float32Array,
+        colors: Float32Array,
+        indices: Uint32Array,
         locations: TerrainShaderLocations,
     ): void {
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -112,7 +111,7 @@ export class TerrainChunk extends Disposable {
             0,
         );
         gl.enableVertexAttribArray(locations.attribs.a_vertexPosition);
-        gl.bufferData(gl.ARRAY_BUFFER, chunkData.vertices, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const normalsBuffer = gl.createBuffer()!;
         buffers.push(normalsBuffer);
@@ -126,7 +125,7 @@ export class TerrainChunk extends Disposable {
             0,
         );
         gl.enableVertexAttribArray(locations.attribs.a_vertexNormal);
-        gl.bufferData(gl.ARRAY_BUFFER, chunkData.normals, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const colorsBuffer = gl.createBuffer()!;
         buffers.push(colorsBuffer);
@@ -140,44 +139,40 @@ export class TerrainChunk extends Disposable {
             0,
         );
         gl.enableVertexAttribArray(locations.attribs.a_vertexColor);
-        gl.bufferData(gl.ARRAY_BUFFER, chunkData.colors, gl.STATIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, colors, gl.STATIC_DRAW);
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const indicesBuffer = gl.createBuffer()!;
         buffers.push(indicesBuffer);
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indicesBuffer);
-        gl.bufferData(
-            gl.ELEMENT_ARRAY_BUFFER,
-            chunkData.indices,
-            gl.STATIC_DRAW,
-        );
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
         gl.bindVertexArray(null);
     }
 
     private _createWaterVao(
         gl: WebGL2RenderingContext,
-        WATER_HEIGHT: number,
         locations: WaterShaderLocations,
     ): void {
         const { chunkX, chunkZ } = this._chunkPosition;
-        const offsetX = chunkX * this._CHUNK_WIDTH;
-        const offsetZ = chunkZ * this._CHUNK_DEPTH;
+        const offsetX = chunkX * CHUNK_WIDTH;
+        const offsetZ = chunkZ * CHUNK_DEPTH;
+        const WATER_HEIGHT = MAX_HEIGHT * EROSION_OCEAN_HEIGHT;
         const vertices = new Float32Array([
             offsetX,
             WATER_HEIGHT,
             offsetZ,
             offsetX,
             WATER_HEIGHT,
-            offsetZ + this._CHUNK_DEPTH,
-            offsetX + this._CHUNK_WIDTH,
+            offsetZ + CHUNK_DEPTH,
+            offsetX + CHUNK_WIDTH,
             WATER_HEIGHT,
             offsetZ,
             offsetX,
             WATER_HEIGHT,
-            offsetZ + this._CHUNK_DEPTH,
-            offsetX + this._CHUNK_WIDTH,
+            offsetZ + CHUNK_DEPTH,
+            offsetX + CHUNK_WIDTH,
             WATER_HEIGHT,
-            offsetZ + this._CHUNK_DEPTH,
-            offsetX + this._CHUNK_WIDTH,
+            offsetZ + CHUNK_DEPTH,
+            offsetX + CHUNK_WIDTH,
             WATER_HEIGHT,
             offsetZ,
         ]);
@@ -204,8 +199,6 @@ export class TerrainChunk extends Disposable {
     }
 
     public getHeightAtChunkOffset(x: number, z: number): number {
-        const CHUNK_WIDTH = this._CHUNK_WIDTH;
-        const CHUNK_DEPTH = this._CHUNK_DEPTH;
         const DEFAULT = 0;
         const heightMap = this._heightMap;
 

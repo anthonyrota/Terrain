@@ -3,4 +3,7 @@ dist
 *.d.ts
 *config*.js
 *.html
+static
+crate
 public
+pkg

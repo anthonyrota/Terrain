@@ -1,9 +1,10 @@
-import 'regenerator-runtime/runtime';
 import { vec3, vec4 } from 'gl-matrix';
 import {
-    ChunkColorRegion,
-    ChunkHeightMapGenerationGeneralParameters,
-} from './chunkWorker';
+    CHUNK_DEPTH,
+    CHUNK_WIDTH,
+    EROSION_OCEAN_HEIGHT,
+    MAX_HEIGHT,
+} from './crateConstants';
 import { FirstPersonCamera } from './FirstPersonCamera';
 import { loadTexturePower2 } from './glUtil';
 import { ChunkPosition } from './LazyChunkLoader';
@@ -24,18 +25,7 @@ void (async function () {
         throw new Error('WebGL2 not supported.');
     }
 
-    const blend = 0.6;
-    const colorRegions: ChunkColorRegion[] = [
-        { maxHeight: 0.65 / 7, color: [201 / 255, 178 / 255, 99 / 255], blend },
-        { maxHeight: 1.15 / 7, color: [164 / 255, 155 / 255, 98 / 255], blend },
-        { maxHeight: 1.7 / 7, color: [164 / 255, 155 / 255, 98 / 255], blend },
-        { maxHeight: 2.6 / 7, color: [229 / 255, 219 / 255, 164 / 255], blend },
-        { maxHeight: 4 / 7, color: [135 / 255, 184 / 255, 82 / 255], blend },
-        { maxHeight: 5.5 / 7, color: [120 / 255, 120 / 255, 120 / 255], blend },
-        { maxHeight: 7 / 7, color: [200 / 255, 200 / 255, 210 / 255], blend },
-    ];
-
-    const playerHeight = 10;
+    const playerHeight = 5;
 
     function getCanCameraJump(): boolean {
         return (
@@ -51,45 +41,15 @@ void (async function () {
         maxFallSpeed: 600,
         gravity: 600,
         horizontalDrag: 0.8 / 1000,
-        fov: toRadians(75),
+        fov: toRadians(90),
         sensitivity: 180 / 50000,
         aspect: canvas.width / canvas.height,
         near: 0.1,
-        far: 1450,
+        far: 1000,
         getCanJump: getCanCameraJump,
     });
 
-    const CHUNK_SIZE = 512;
-    // eslint-disable-next-line max-len
-    const chunkHeightMapGenerationGeneralParameters: ChunkHeightMapGenerationGeneralParameters = {
-        CHUNK_WIDTH: CHUNK_SIZE,
-        CHUNK_DEPTH: CHUNK_SIZE,
-        MAX_HEIGHT: 1024,
-        OCTAVES: 5,
-        PERSISTENCE: 0.25,
-        LACUNARITY: 2.5,
-        FINENESS: 1024,
-        NOISE_SLOPE: 0.84,
-        erosionParameters: {
-            DROPS_PER_CELL: 0.75,
-            EROSION_RATE: 0.1,
-            DEPOSITION_RATE: 0.075,
-            SPEED: 0.15,
-            FRICTION: 0.7,
-            RADIUS: 0.8,
-            MAX_RAIN_ITERATIONS: 800,
-            ITERATION_SCALE: 0.04,
-            OCEAN_HEIGHT: 0.37,
-            OCEAN_SLOWDOWN: 5,
-            EDGE_DAMP_MIN_DISTANCE: 3,
-            EDGE_DAMP_MAX_DISTANCE: 10,
-            EDGE_DAMP_STRENGTH: 5,
-        },
-    };
-    const waterHeight =
-        chunkHeightMapGenerationGeneralParameters.MAX_HEIGHT *
-        chunkHeightMapGenerationGeneralParameters.erosionParameters
-            .OCEAN_HEIGHT;
+    const waterHeight = MAX_HEIGHT * EROSION_OCEAN_HEIGHT;
 
     const terrainShader = makeTerrainShader(gl);
     const reflectionFramebufferWidth = 512;
@@ -104,15 +64,15 @@ void (async function () {
     });
 
     const terrain = new Terrain({
-        chunkHeightMapGenerationGeneralParameters,
-        colorRegions,
         getPlayerChunkPosition: (): ChunkPosition => {
             return {
-                chunkX: Math.floor(camera.x / CHUNK_SIZE),
-                chunkZ: Math.floor(camera.z / CHUNK_SIZE),
+                chunkX: Math.floor(camera.x / CHUNK_WIDTH),
+                chunkZ: Math.floor(camera.z / CHUNK_DEPTH),
             };
         },
-        renderDistance: Math.ceil(camera.far / CHUNK_SIZE),
+        renderDistance: Math.ceil(
+            camera.far / ((CHUNK_WIDTH + CHUNK_DEPTH) / 2),
+        ),
         gl,
         terrainShaderLocations: terrainShader.locations,
         waterShaderLocations: waterShader.locations,

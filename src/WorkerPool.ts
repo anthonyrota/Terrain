@@ -1,69 +1,88 @@
 import { Disposable } from './Disposable';
 import { removeFirst } from './removeFirst';
-import workerize, {
-    WorkerMethodMap,
-    WorkerFactory,
-    Workerized,
-} from './workerize';
+import { RequestBase, ResponseBase } from './terrainWorkerTypes';
 
-export class WorkerPool<
-    M extends WorkerMethodMap,
-    K_ extends keyof M
-> extends Disposable {
-    private _activeWorkers: Workerized<M>[] = [];
-    private _inactiveWorkers: Workerized<M>[] = [];
+export class WorkerPool<Request, Response> extends Disposable {
+    private _requestId = 0;
+    private _activeWorkers: Worker[] = [];
+    private _inactiveWorkers: Worker[] = [];
     private _executionQueue: {
-        method: K_;
-        parameters: Parameters<M[keyof M]>;
+        request: Request & RequestBase;
         disposable: Disposable;
         onExecutionStart: () => void;
-        resolve: (value: ReturnType<M[keyof M]>) => void;
+        resolve: (value: Response) => void;
+        reject: (error: unknown) => void;
+    }[] = [];
+    private _requestQueue: {
+        request: Request & RequestBase;
+        disposable: Disposable;
+        resolve: (value: Response) => void;
         reject: (error: unknown) => void;
     }[] = [];
 
-    constructor(workerFactory: WorkerFactory<M>, workerCount: number) {
+    constructor(makeWorker: () => Worker, workerCount: number) {
         super();
         if (workerCount <= 0) {
             throw new TypeError(`Invalid number of workers n=${workerCount}`);
         }
         for (let i = 0; i < workerCount; i++) {
-            const worker = workerize(workerFactory);
+            const worker = makeWorker();
             this._inactiveWorkers[i] = worker;
             this.add(
                 new Disposable(() => {
                     worker.terminate();
                 }),
             );
+            worker.onmessage = (
+                event: MessageEvent<Response & ResponseBase>,
+            ) => {
+                const response = event.data;
+                for (let i = 0; i < this._requestQueue.length; i++) {
+                    const item = this._requestQueue[i];
+                    if (response.requestId === item.request.requestId) {
+                        this._requestQueue.splice(i, 1);
+                        this._inactiveWorkers.push(worker);
+                        this._checkQueue();
+                        if (item.disposable.disposed) {
+                            item.reject(new ExecutionCanceledError());
+                        } else {
+                            item.resolve(response);
+                        }
+                        break;
+                    }
+                }
+            };
         }
     }
 
-    public execute<K extends K_>(
-        method: K,
-        parameters: Parameters<M[K]>,
+    public execute(
+        request: Request,
         disposable: Disposable,
-    ): Promise<ReturnType<M[K]>> {
+    ): Promise<Response> {
         if (this.disposed || disposable.disposed) {
             return Promise.reject(new ExecutionCanceledError());
         }
+        const internalRequest: Request & RequestBase = {
+            ...request,
+            requestId: this._requestId++,
+        };
         if (this._inactiveWorkers.length !== 0) {
             return this._execute(
-                method,
-                parameters,
+                internalRequest,
                 disposable,
                 // eslint-disable-next-line max-len
                 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
                 this._inactiveWorkers.shift()!,
             );
         }
-        let resolve!: (value: ReturnType<M[K]>) => void;
+        let resolve!: (value: Response) => void;
         let reject!: (error: unknown) => void;
-        const promise = new Promise<ReturnType<M[K]>>((resolve_, reject_) => {
+        const promise = new Promise<Response>((resolve_, reject_) => {
             resolve = resolve_;
             reject = reject_;
         });
         const queueItem = {
-            method,
-            parameters,
+            request: internalRequest,
             disposable,
             onExecutionStart(): void {
                 disposable.remove(removeFromQueueDisposable);
@@ -89,37 +108,20 @@ export class WorkerPool<
         this._executionQueue.length = 0;
     }
 
-    private _execute<K extends K_>(
-        method: K,
-        parameters: Parameters<M[K]>,
+    private _execute(
+        request: Request & RequestBase,
         disposable: Disposable,
-        worker: Workerized<M>,
-    ): Promise<ReturnType<M[K]>> {
+        worker: Worker,
+    ): Promise<Response> {
         this._activeWorkers.push(worker);
         return new Promise((resolve, reject) => {
-            worker.call(method, parameters).then(
-                (result) => {
-                    this._inactiveWorkers.push(worker);
-                    this._checkQueue();
-                    if (disposable.disposed) {
-                        reject(new ExecutionCanceledError());
-                        return;
-                    }
-                    resolve(result);
-                },
-                (error) => {
-                    this._inactiveWorkers.push(worker);
-                    this._checkQueue();
-                    if (disposable.disposed) {
-                        setTimeout(() => {
-                            throw error;
-                        });
-                        reject(new ExecutionCanceledError());
-                        return;
-                    }
-                    reject(error);
-                },
-            );
+            this._requestQueue.push({
+                request,
+                disposable,
+                resolve,
+                reject,
+            });
+            worker.postMessage(request);
         });
     }
 
@@ -128,8 +130,7 @@ export class WorkerPool<
             return;
         }
         const {
-            method,
-            parameters,
+            request,
             disposable,
             onExecutionStart,
             resolve,
@@ -139,10 +140,7 @@ export class WorkerPool<
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         const worker = this._inactiveWorkers.shift()!;
         onExecutionStart();
-        this._execute(method, parameters, disposable, worker).then(
-            resolve,
-            reject,
-        );
+        this._execute(request, disposable, worker).then(resolve, reject);
     }
 }
 
