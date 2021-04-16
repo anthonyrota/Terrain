@@ -4,7 +4,8 @@
     "version": "0.1.0",
     "scripts": {
         "start": "rimraf public crate/pkg && webpack serve --open --config webpack.dev.config.js",
-        "build": "rimraf public crate/pkg && webpack --config webpack.prod.config.js"
+        "build": "rimraf public crate/pkg && webpack --config webpack.prod.config.js",
+        "vercel-build": "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable && source $HOME/.cargo/env && curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh && npm run build"
     },
     "devDependencies": {
         "@babel/core": "7.13.15",
