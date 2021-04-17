@@ -66,11 +66,15 @@ static COLOR_REGIONS: [ColorRegion; COLOR_REGIONS_ARRAY_LENGTH] = [
     },
 ];
 const EROSION_DROPS_PER_CELL: f32 = 1.0;
+const EROSION_INITIAL_WATER_AMOUNT: f32 = 1.0;
+const EROSION_WATER_EVAPORATION_RATE: f32 = 0.01;
 const EROSION_EROSION_RATE: f32 = 0.3;
 const EROSION_DEPOSITION_RATE: f32 = 0.3;
-const EROSION_SEDIMENT_CAPACITY_FACTOR: f32 = 1.0;
+const EROSION_SEDIMENT_CAPACITY_FACTOR: f32 = 4.0;
 const EROSION_MIN_SEDIMENT_CAPACITY: f32 = 0.02;
-const EROSION_SPEED: f32 = 0.3;
+const EROSION_SPEED: f32 = 0.15;
+const EROSION_STOP_SPEED: f32 = 0.01;
+const EROSION_MAX_SPEED: f32 = 0.8;
 const EROSION_FRICTION: f32 = 0.7;
 const EROSION_RADIUS: f32 = 0.8;
 const EROSION_MAX_RAIN_ITERATIONS: u32 = 800;
@@ -82,7 +86,7 @@ const EROSION_EDGE_DAMP_STRENGTH: f32 = 3.0;
 const EROSION_KERNEL_RADIUS: i32 = 2;
 const EROSION_KERNEL_ARRAY_SIZE: usize = 25;
 type ErosionKernelArray = [f32; EROSION_KERNEL_ARRAY_SIZE];
-const EROSION_KERNEL: ErosionKernelArray = [
+static EROSION_KERNEL: ErosionKernelArray = [
     0.003765, 0.015019, 0.023792, 0.015019, 0.003765, 0.015019, 0.059912, 0.094907, 0.059912,
     0.015019, 0.023792, 0.094907, 0.150342, 0.094907, 0.023792, 0.015019, 0.059912, 0.094907,
     0.059912, 0.015019, 0.003765, 0.015019, 0.023792, 0.015019, 0.003765,
@@ -274,12 +278,11 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
 
         let offset_x = rng.gen_range(-EROSION_RADIUS, EROSION_RADIUS);
         let offset_z = rng.gen_range(-EROSION_RADIUS, EROSION_RADIUS);
-        let mut water: f32 = 1.0;
+        let mut water: f32 = EROSION_INITIAL_WATER_AMOUNT;
         let mut sediment: f32 = 0.0;
         let mut x = start_x;
         let mut z = start_z;
         let mut prev_x = start_x;
-        let mut prev_y = get_height_interpolated(start_x, start_z, height_map);
         let mut prev_z = start_z;
         let mut vel_x: f32 = 0.0;
         let mut vel_z: f32 = 0.0;
@@ -316,6 +319,29 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
                 break;
             }
 
+            vel_x = EROSION_FRICTION * vel_x + norm_x * EROSION_SPEED;
+            vel_z = EROSION_FRICTION * vel_z + norm_z * EROSION_SPEED;
+            let water_slowdown_factor = (min(EROSION_OCEAN_HEIGHT * MAX_HEIGHT, cur_y)
+                / (EROSION_OCEAN_HEIGHT * MAX_HEIGHT))
+                .powf(EROSION_OCEAN_SLOWDOWN);
+            vel_x *= water_slowdown_factor;
+            vel_z *= water_slowdown_factor;
+            let vel_sqr = vel_x * vel_x + vel_z * vel_z;
+            if vel_sqr < EROSION_STOP_SPEED * EROSION_STOP_SPEED {
+                break;
+            }
+            if vel_sqr > EROSION_MAX_SPEED * EROSION_MAX_SPEED {
+                let vel = vel_sqr.sqrt();
+                let scale = EROSION_MAX_SPEED / vel;
+                vel_x *= scale;
+                vel_z *= scale;
+            }
+            let _prev_x = x;
+            let _prev_z = z;
+            x += vel_x;
+            z += vel_z;
+            water *= 1.0 - EROSION_WATER_EVAPORATION_RATE;
+
             let dist_to_edge = min(
                 prev_x,
                 min(
@@ -331,9 +357,11 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
                 } else {
                     1.0
                 };
-                let delta_height = cur_y - prev_y;
+                let delta_height =
+                    get_height_interpolated(x + offset_x, z + offset_z, height_map) - cur_y;
                 let speed = (vel_x * vel_x + vel_z * vel_z).sqrt();
 
+                // Based off https://github.com/SebLague/Hydraulic-Erosion
                 // MIT License
                 // Copyright (c) 2019 Sebastian Lague
                 // Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -384,22 +412,8 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
                 }
             }
 
-            vel_x = EROSION_FRICTION * vel_x + norm_x * EROSION_SPEED;
-            vel_z = EROSION_FRICTION * vel_z + norm_z * EROSION_SPEED;
-            let water_slowdown_factor = (min(EROSION_OCEAN_HEIGHT * MAX_HEIGHT, cur_y)
-                / (EROSION_OCEAN_HEIGHT * MAX_HEIGHT))
-                .powf(EROSION_OCEAN_SLOWDOWN);
-            vel_x *= water_slowdown_factor;
-            vel_z *= water_slowdown_factor;
-            if vel_x * vel_x + vel_z * vel_z < 0.01 {
-                break;
-            }
-            prev_x = x;
-            prev_y = cur_y;
-            prev_z = z;
-            x += vel_x;
-            z += vel_z;
-            water *= 0.99;
+            prev_x = _prev_x;
+            prev_z = _prev_z;
         }
     }
 
