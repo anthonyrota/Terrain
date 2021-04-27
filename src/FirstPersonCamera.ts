@@ -57,6 +57,9 @@ export class FirstPersonCamera extends Disposable {
         this._calculateLookAtMatrix();
         this._calculateFrustum();
     }
+    public get xyz(): vec3 {
+        return vec3.clone(this._position);
+    }
 
     private _horizontalSpeed: number;
     private _verticalSpeed: number;

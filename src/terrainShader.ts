@@ -1,5 +1,6 @@
 import { vec3, vec4, mat4 } from 'gl-matrix';
 import { initProgram, calculateLocations, Locations } from './glUtil';
+import { atmosphereFragment } from './skyShader';
 import { TerrainChunk } from './TerrainChunk';
 
 const vertexSource = `#version 300 es
@@ -23,18 +24,29 @@ void main(void) {
 
     gl_Position = u_projMatrix * u_viewMatrix * vec4(a_vertexPosition, 1.0);
 }`;
+export const fogFragment = `
+vec3 applyFog(float distanceToCamera, vec3 cameraToVertex, vec3 color) {
+    float fogFactor = clamp(1.0 - pow(distanceToCamera / u_fogDistance, u_fogPower), 0.0, 1.0);
+    if (fogFactor <= 0.9) {
+        vec2 xzDir = normalize(vec2(cameraToVertex.x, cameraToVertex.z));
+        vec3 fogColor = atmosphere(normalize(vec3(xzDir.x, u_atmosphereCutoffFactor, xzDir.y)));
+        return mix(fogColor, color, fogFactor);
+    }
+    return color;
+}
+`.trim();
 const fragmentSource = `#version 300 es
 precision highp float;
 
-uniform vec3 u_lightDirection;
+uniform vec3 u_sunPosition;
 uniform vec3 u_ambientColor;
 uniform vec3 u_diffuseColor;
 uniform float u_fogDistance;
 uniform float u_fogPower;
-uniform vec3 u_fogColor;
 uniform vec3 u_cameraPosition;
 uniform float u_specularReflectivity;
 uniform float u_shineDamping;
+uniform float u_atmosphereCutoffFactor;
 uniform vec4 u_clippingPlane;
 uniform bool u_useClippingPlane;
 
@@ -44,9 +56,12 @@ in vec3 v_vertexColor;
 
 out vec4 out_color;
 
+${atmosphereFragment}
+${fogFragment}
+
 vec3 calculateSpecularLighting(vec3 toCameraVector, vec3 toLightVector, vec3 normal) {
-    vec3 reflectedLightDirection = reflect(-toLightVector, normal);
-    float specularFactor = max(dot(reflectedLightDirection, toCameraVector), 0.0);
+    vec3 reflectedSunPosition = reflect(-toLightVector, normal);
+    float specularFactor = max(dot(reflectedSunPosition, toCameraVector), 0.0);
     float specularValue = pow(specularFactor, u_shineDamping);
     return specularValue * u_specularReflectivity * u_diffuseColor;
 }
@@ -61,14 +76,13 @@ void main(void) {
         discard;
     }
     vec3 toCameraVector = normalize(u_cameraPosition - v_vertexPosition);
-    vec3 toLightVector = u_lightDirection;
+    vec3 toLightVector = u_sunPosition;
     vec3 normal = normalize(v_vertexNormal);
     vec3 specularLighting = calculateSpecularLighting(toCameraVector, toLightVector, normal);
     vec3 diffuseLighting = calculateDiffuseLighting(toLightVector, normal);
-    vec3 vertexColor = v_vertexColor * (u_ambientColor + (diffuseLighting + specularLighting) / 4.0);
+    vec3 vertexColor = v_vertexColor * (u_ambientColor + (diffuseLighting + specularLighting));
     float distanceToCamera = length(u_cameraPosition - v_vertexPosition);
-    float fogFactor = clamp(1.0 - pow(distanceToCamera / u_fogDistance, u_fogPower), 0.0, 1.0);
-    out_color = vec4(mix(u_fogColor, vertexColor, fogFactor), 1.0);
+    out_color = vec4(applyFog(distanceToCamera, -toCameraVector, vertexColor), 1.0);
 }`;
 
 const attribs = {
@@ -79,17 +93,17 @@ const attribs = {
 const uniforms = {
     u_projMatrix: true,
     u_viewMatrix: true,
-    u_lightDirection: true,
+    u_sunPosition: true,
     u_ambientColor: true,
     u_diffuseColor: true,
     u_fogDistance: true,
     u_fogPower: true,
-    u_fogColor: true,
     u_cameraPosition: true,
     u_clippingPlane: true,
     u_useClippingPlane: true,
     u_specularReflectivity: true,
     u_shineDamping: true,
+    u_atmosphereCutoffFactor: true,
 } as const;
 
 export type TerrainShaderLocations = Locations<typeof attribs, typeof uniforms>;
@@ -107,13 +121,13 @@ export interface TerrainShaderRenderParameters {
     cameraPosition: vec3;
     ambientColor: vec3;
     diffuseColor: vec3;
-    lightDirection: vec3;
+    sunPosition: vec3;
     fogDistance: number;
     fogPower: number;
-    fogColor: vec3;
     terrainChunks: TerrainChunk[];
     specularReflectivity: number;
     shineDamping: number;
+    atmosphereCutoffFactor: number;
 }
 
 export function makeTerrainShader(gl: WebGL2RenderingContext): TerrainShader {
@@ -129,13 +143,13 @@ export function makeTerrainShader(gl: WebGL2RenderingContext): TerrainShader {
             cameraPosition,
             ambientColor,
             diffuseColor,
-            lightDirection,
+            sunPosition,
             fogDistance,
             fogPower,
-            fogColor,
             terrainChunks,
             specularReflectivity,
             shineDamping,
+            atmosphereCutoffFactor,
         } = parameters;
 
         if (terrainChunks.length === 0) {
@@ -161,17 +175,23 @@ export function makeTerrainShader(gl: WebGL2RenderingContext): TerrainShader {
         gl.uniform3fv(locations.uniforms.u_cameraPosition, cameraPosition);
         gl.uniform3fv(locations.uniforms.u_ambientColor, ambientColor);
         gl.uniform3fv(locations.uniforms.u_diffuseColor, diffuseColor);
-        gl.uniform3fv(locations.uniforms.u_lightDirection, lightDirection);
+        gl.uniform3fv(locations.uniforms.u_sunPosition, sunPosition);
         gl.uniform1f(locations.uniforms.u_fogDistance, fogDistance);
         gl.uniform1f(locations.uniforms.u_fogPower, fogPower);
-        gl.uniform3fv(locations.uniforms.u_fogColor, fogColor);
         gl.uniform1f(
             locations.uniforms.u_specularReflectivity,
             specularReflectivity,
         );
         gl.uniform1f(locations.uniforms.u_shineDamping, shineDamping);
+        gl.uniform1f(
+            locations.uniforms.u_atmosphereCutoffFactor,
+            atmosphereCutoffFactor,
+        );
 
         terrainChunks.forEach((chunk) => {
+            if (!chunk.initialized) {
+                return;
+            }
             gl.bindVertexArray(chunk.vao);
             gl.drawElements(
                 gl.TRIANGLES,

@@ -65,16 +65,18 @@ static COLOR_REGIONS: [ColorRegion; COLOR_REGIONS_ARRAY_LENGTH] = [
         blend: 0.6,
     },
 ];
-const EROSION_DROPS_PER_CELL: f32 = 1.0;
+const EROSION_DROPS_PER_CELL: f32 = 1.2;
 const EROSION_INITIAL_WATER_AMOUNT: f32 = 1.0;
 const EROSION_WATER_EVAPORATION_RATE: f32 = 0.01;
 const EROSION_EROSION_RATE: f32 = 0.3;
-const EROSION_DEPOSITION_RATE: f32 = 0.3;
-const EROSION_SEDIMENT_CAPACITY_FACTOR: f32 = 4.0;
+const EROSION_DEPOSITION_RATE: f32 = 0.15;
+const MAX_DEPOSITION: f32 = 0.6;
+const EROSION_SEDIMENT_CAPACITY_FACTOR: f32 = 10.0;
 const EROSION_MIN_SEDIMENT_CAPACITY: f32 = 0.02;
-const EROSION_SPEED: f32 = 0.15;
+const EROSION_INITIAL_SPEED: f32 = 0.4;
+const EROSION_SPEED: f32 = 0.1;
 const EROSION_STOP_SPEED: f32 = 0.01;
-const EROSION_MAX_SPEED: f32 = 0.8;
+const EROSION_MAX_SPEED: f32 = 0.7;
 const EROSION_FRICTION: f32 = 0.7;
 const EROSION_RADIUS: f32 = 0.8;
 const EROSION_MAX_RAIN_ITERATIONS: u32 = 800;
@@ -223,7 +225,7 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
     // the following conditions:
     // The above copyright notice and this permission notice shall be
     // included in all copies or substantial portions of the Software.
-    fn trace(start_x: f32, start_z: f32, height_map: &mut HeightMapArray, rng: &mut StdRng) {
+    fn trace(height_map: &mut HeightMapArray, rng: &mut StdRng) {
         fn get_height_interpolated(x: f32, z: f32, height_map: &HeightMapArray) -> f32 {
             let floor_x = x.floor() as usize;
             let floor_z = z.floor() as usize;
@@ -276,6 +278,8 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
             );
         }
 
+        let start_x = rng.gen_range(0.0, CHUNK_WIDTH as f32);
+        let start_z = rng.gen_range(0.0, CHUNK_DEPTH as f32);
         let offset_x = rng.gen_range(-EROSION_RADIUS, EROSION_RADIUS);
         let offset_z = rng.gen_range(-EROSION_RADIUS, EROSION_RADIUS);
         let mut water: f32 = EROSION_INITIAL_WATER_AMOUNT;
@@ -284,8 +288,8 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
         let mut z = start_z;
         let mut prev_x = start_x;
         let mut prev_z = start_z;
-        let mut vel_x: f32 = 0.0;
-        let mut vel_z: f32 = 0.0;
+        let mut vel_x: f32 = rng.gen_range(-EROSION_INITIAL_SPEED, EROSION_INITIAL_SPEED);
+        let mut vel_z: f32 = rng.gen_range(-EROSION_INITIAL_SPEED, EROSION_INITIAL_SPEED);
 
         for _ in 0..EROSION_MAX_RAIN_ITERATIONS {
             let cur_x = x + offset_x;
@@ -381,12 +385,15 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
                 // If carrying more sediment than capacity, or if flowing uphill:
                 if sediment > sediment_capacity || delta_height > 0.0 {
                     // If moving uphill (deltaHeight > 0) try fill up to the current height, otherwise deposit a fraction of the excess sediment
-                    let amount_to_deposit = damp_factor
-                        * (if delta_height > 0.0 {
-                            min(delta_height, sediment)
-                        } else {
-                            (sediment - sediment_capacity) * EROSION_DEPOSITION_RATE
-                        });
+                    let amount_to_deposit = min(
+                        damp_factor
+                            * (if delta_height > 0.0 {
+                                min(delta_height, sediment)
+                            } else {
+                                (sediment - sediment_capacity) * EROSION_DEPOSITION_RATE
+                            }),
+                        MAX_DEPOSITION,
+                    );
                     sediment -= amount_to_deposit;
                     add_height_interpolated(prev_x, prev_z, amount_to_deposit, height_map);
                 } else {
@@ -421,12 +428,7 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
         (EROSION_DROPS_PER_CELL * CHUNK_WIDTH as f32 * CHUNK_DEPTH as f32).floor() as u32;
 
     for _ in 0..drops_count {
-        trace(
-            rng.gen_range(0.0, CHUNK_WIDTH as f32),
-            rng.gen_range(0.0, CHUNK_DEPTH as f32),
-            height_map,
-            &mut rng,
-        )
+        trace(height_map, &mut rng)
     }
 
     let chunk_offset_x = chunk_x * CHUNK_WIDTH as i32;

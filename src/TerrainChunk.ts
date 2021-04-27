@@ -12,21 +12,26 @@ import { TerrainShaderLocations } from './terrainShader';
 import { WaterShaderLocations } from './waterShader';
 
 export interface TerrainChunkParameters {
+    chunkPosition: ChunkPosition;
+    gl: WebGL2RenderingContext;
+    waterShaderLocations: WaterShaderLocations;
+}
+
+export interface TerrainChunkInitParameters {
+    gl: WebGL2RenderingContext;
     heightMap: Float32Array;
     vertices: Float32Array;
     normals: Float32Array;
     colors: Float32Array;
     indices: Uint32Array;
-    chunkPosition: ChunkPosition;
-    gl: WebGL2RenderingContext;
     terrainShaderLocations: TerrainShaderLocations;
-    waterShaderLocations: WaterShaderLocations;
 }
 
 export class TerrainChunk extends Disposable {
-    private _heightMap: Float32Array;
+    private _initialized = false;
+    private _heightMap!: Float32Array;
     private _chunkPosition: ChunkPosition;
-    private _indicesCount: number;
+    private _indicesCount!: number;
     private _boundingBox: Box3;
     private _vao!: WebGLVertexArrayObject;
     private _waterVao!: WebGLVertexArrayObject;
@@ -34,6 +39,9 @@ export class TerrainChunk extends Disposable {
 
     public get boundingBox(): Box3 {
         return this._boundingBox;
+    }
+    public get initialized(): boolean {
+        return this._initialized;
     }
     public get vao(): WebGLVertexArrayObject {
         return this._vao;
@@ -60,18 +68,8 @@ export class TerrainChunk extends Disposable {
             this._buffers = null;
         });
         const { gl } = parameters;
-        this._heightMap = parameters.heightMap;
         this._chunkPosition = parameters.chunkPosition;
-        this._createVao(
-            gl,
-            parameters.vertices,
-            parameters.normals,
-            parameters.colors,
-            parameters.indices,
-            parameters.terrainShaderLocations,
-        );
         this._createWaterVao(gl, parameters.waterShaderLocations);
-        this._indicesCount = parameters.indices.length;
         const boxMin = vec3.fromValues(
             this._chunkPosition.chunkX * CHUNK_WIDTH,
             0,
@@ -83,6 +81,20 @@ export class TerrainChunk extends Disposable {
             vec3.fromValues(CHUNK_WIDTH, MAX_HEIGHT, CHUNK_DEPTH),
         );
         this._boundingBox = new Box3(boxMin, boxMax);
+    }
+
+    public init(parameters: TerrainChunkInitParameters): void {
+        this._initialized = true;
+        this._heightMap = parameters.heightMap;
+        this._createVao(
+            parameters.gl,
+            parameters.vertices,
+            parameters.normals,
+            parameters.colors,
+            parameters.indices,
+            parameters.terrainShaderLocations,
+        );
+        this._indicesCount = parameters.indices.length;
     }
 
     private _createVao(
@@ -202,7 +214,7 @@ export class TerrainChunk extends Disposable {
         const DEFAULT = 0;
         const heightMap = this._heightMap;
 
-        if (x < 0 || z < 0) {
+        if (!this._initialized || x < 0 || z < 0) {
             return DEFAULT;
         }
 

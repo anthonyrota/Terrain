@@ -1,6 +1,8 @@
 import { vec3, mat4 } from 'gl-matrix';
 import { initProgram, calculateLocations, Locations } from './glUtil';
+import { atmosphereFragment } from './skyShader';
 import { TerrainChunk } from './TerrainChunk';
+import { fogFragment } from './terrainShader';
 
 const vertexSource = `#version 300 es
 precision highp float;
@@ -47,18 +49,21 @@ uniform float u_reflectivity;
 uniform vec3 u_waterColor;
 uniform float u_waterColorStrength;
 uniform vec3 u_diffuseColor;
-uniform vec3 u_lightDirection;
+uniform vec3 u_sunPosition;
 uniform float u_fogDistance;
 uniform float u_fogPower;
-uniform vec3 u_fogColor;
 uniform float u_specularReflectivity;
 uniform float u_shineDamping;
+uniform float u_atmosphereCutoffFactor;
 
 out vec4 out_color;
 
+${atmosphereFragment}
+${fogFragment}
+
 vec3 calculateSpecularLighting(vec3 toCameraVector, vec3 toLightVector, vec3 normal, float multiplier) {
-    vec3 reflectedLightDirection = reflect(-toLightVector, normal);
-    float specularFactor = max(dot(reflectedLightDirection, toCameraVector), 0.0);
+    vec3 reflectedSunPosition = reflect(-toLightVector, normal);
+    float specularFactor = max(dot(reflectedSunPosition, toCameraVector), 0.0);
     float specularValue = pow(specularFactor, u_shineDamping);
     return specularValue * u_specularReflectivity * multiplier * u_diffuseColor;
 }
@@ -84,15 +89,19 @@ void main(void) {
     vec4 normalMapColor = texture(u_normalTexture, distortedTexCoords);
     vec3 normal = normalize(vec3(normalMapColor.r * 2.0 - 1.0, normalMapColor.b * 3.0, normalMapColor.g * 2.0 - 1.0));
     float refractiveFactor = pow(dot(toCameraDirection, normal), u_reflectivity);
-    out_color = mix(reflectColor, refractColor, refractiveFactor);
-    out_color = mix(out_color, vec4(u_waterColor, 1.0), u_waterColorStrength);
+    vec3 finalColor = mix(reflectColor.rgb, refractColor.rgb, refractiveFactor);
+    finalColor = mix(finalColor, u_waterColor, u_waterColorStrength);
     float specularMultiplier = pow(clamp(waterDepth / u_blendDistance, 0.0, 1.0), 2.0);
-    vec3 specularLighting = calculateSpecularLighting(toCameraDirection, u_lightDirection, normal, specularMultiplier);
-    out_color += vec4(specularLighting, 0.0);
+    vec3 specularLighting = calculateSpecularLighting(toCameraDirection, u_sunPosition, normal, specularMultiplier);
+    finalColor += specularLighting;
     float distanceToCamera = length(u_cameraPosition - v_vertexPosition);
-    float fogFactor = clamp(1.0 - pow(distanceToCamera / u_fogDistance, u_fogPower), 0.0, 1.0);
-    out_color = vec4(mix(u_fogColor, out_color.rgb, fogFactor), 1.0);
-    out_color.a = clamp(waterDepth / u_blendDistance, 0.0, 1.0);
+    finalColor = applyFog(distanceToCamera, -toCameraDirection, finalColor);
+    if (distanceToCamera >= u_fogDistance * 0.9) {
+        out_color = vec4(finalColor, 1.0);
+    } else {
+        float alpha = clamp(waterDepth / u_blendDistance, 0.0, 1.0);
+        out_color = vec4(finalColor, alpha);
+    }
 }`;
 
 const attribs = {
@@ -118,12 +127,12 @@ const uniforms = {
     u_waterColor: true,
     u_waterColorStrength: true,
     u_diffuseColor: true,
-    u_lightDirection: true,
+    u_sunPosition: true,
     u_fogDistance: true,
     u_fogPower: true,
-    u_fogColor: true,
     u_specularReflectivity: true,
     u_shineDamping: true,
+    u_atmosphereCutoffFactor: true,
 } as const;
 
 export type WaterShaderLocations = Locations<typeof attribs, typeof uniforms>;
@@ -160,12 +169,12 @@ export interface WaterShaderRenderParameters {
     waterColor: vec3;
     waterColorStrength: number;
     diffuseColor: vec3;
-    lightDirection: vec3;
+    sunPosition: vec3;
     fogDistance: number;
     fogPower: number;
-    fogColor: vec3;
     specularReflectivity: number;
     shineDamping: number;
+    atmosphereCutoffFactor: number;
 }
 
 export function makeWaterShader(
@@ -318,12 +327,12 @@ export function makeWaterShader(
             waterColor,
             waterColorStrength,
             diffuseColor,
-            lightDirection,
+            sunPosition,
             fogDistance,
             fogPower,
-            fogColor,
             specularReflectivity,
             shineDamping,
+            atmosphereCutoffFactor,
         } = parameters;
 
         if (terrainChunks.length === 0) {
@@ -370,15 +379,18 @@ export function makeWaterShader(
             waterColorStrength,
         );
         gl.uniform3fv(locations.uniforms.u_diffuseColor, diffuseColor);
-        gl.uniform3fv(locations.uniforms.u_lightDirection, lightDirection);
+        gl.uniform3fv(locations.uniforms.u_sunPosition, sunPosition);
         gl.uniform1f(locations.uniforms.u_fogDistance, fogDistance);
         gl.uniform1f(locations.uniforms.u_fogPower, fogPower);
-        gl.uniform3fv(locations.uniforms.u_fogColor, fogColor);
         gl.uniform1f(
             locations.uniforms.u_specularReflectivity,
             specularReflectivity,
         );
         gl.uniform1f(locations.uniforms.u_shineDamping, shineDamping);
+        gl.uniform1f(
+            locations.uniforms.u_atmosphereCutoffFactor,
+            atmosphereCutoffFactor,
+        );
 
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);

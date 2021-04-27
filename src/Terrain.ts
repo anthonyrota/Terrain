@@ -116,10 +116,8 @@ export class Terrain extends Disposable {
             if (this.disposed) {
                 return;
             }
-            const chunk = this._chunks.get(serializedChunkPosition);
-            if (!chunk) {
-                return;
-            }
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            const chunk = this._chunks.get(serializedChunkPosition)!;
             chunk.dispose();
             this._chunks.delete(serializedChunkPosition);
         });
@@ -128,6 +126,12 @@ export class Terrain extends Disposable {
             chunkX,
             chunkZ,
         };
+        const chunk = new TerrainChunk({
+            chunkPosition,
+            gl: this._gl,
+            waterShaderLocations: this._waterShaderLocations,
+        });
+        this._chunks.set(serializedChunkPosition, chunk);
         this._chunkWorker
             .execute(request, disposable)
             .then((response) => {
@@ -138,18 +142,15 @@ export class Terrain extends Disposable {
                     colors,
                     indices,
                 } = response as GenerateChunkResponse;
-                const chunk = new TerrainChunk({
+                chunk.init({
                     heightMap,
                     vertices,
                     normals,
                     colors,
                     indices,
-                    chunkPosition,
                     gl: this._gl,
                     terrainShaderLocations: this._terrainShaderLocations,
-                    waterShaderLocations: this._waterShaderLocations,
                 });
-                this._chunks.set(serializedChunkPosition, chunk);
             })
             .catch((error) => {
                 if (error instanceof ExecutionCanceledError) {

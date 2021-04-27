@@ -2,7 +2,5 @@
 
 ## TODO
 
-- [x] Fix seams
-- [ ] Fix erosion
-- [ ] Water
+- [ ] Antialias water
 - [ ] Flying
