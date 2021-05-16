@@ -1,4 +1,5 @@
 import { vec3, vec4, mat4 } from 'gl-matrix';
+import throttle from 'lodash.throttle';
 import {
     CHUNK_DEPTH,
     CHUNK_WIDTH,
@@ -6,9 +7,13 @@ import {
     MAX_HEIGHT,
 } from './crateConstants';
 import { FirstPersonCamera } from './FirstPersonCamera';
-import { loadTexturePower2 } from './glUtil';
+import {
+    attachFramebufferColorTexture,
+    checkFramebufferStatus,
+    loadTexturePower2,
+} from './glUtil';
 import { ChunkPosition } from './LazyChunkLoader';
-import { makeSkyShader } from './skyShader';
+import { makeSkyShader, SkyShaderRenderParameters } from './skyShader';
 import { Terrain } from './Terrain';
 import {
     makeTerrainShader,
@@ -19,7 +24,7 @@ import { makeWaterShader } from './waterShader';
 
 const canvas = document.querySelector('.canvas') as HTMLCanvasElement;
 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-const gl = canvas.getContext('webgl2', { antialias: true, alpha: false })!;
+const gl = canvas.getContext('webgl2', { antialias: false, alpha: false })!;
 
 if (!gl) {
     throw new Error('WebGL2 not supported.');
@@ -84,6 +89,8 @@ function resize(): void {
     canvas.height = window.innerHeight;
     camera.aspect = canvas.width / canvas.height;
 }
+resize();
+window.addEventListener('resize', resize);
 
 function clear(): void {
     gl.clearColor(1, 1, 1, 1);
@@ -93,8 +100,90 @@ function clear(): void {
     gl.enable(gl.CULL_FACE);
 }
 
-resize();
-window.addEventListener('resize', resize);
+let fbWidth = canvas.width;
+let fbHeight = canvas.height;
+const renderFramebuffer = gl.createFramebuffer();
+const colorFramebuffer = gl.createFramebuffer();
+const colorRenderbuffer = gl.createRenderbuffer();
+const depthBuffer = gl.createRenderbuffer();
+gl.bindFramebuffer(gl.FRAMEBUFFER, renderFramebuffer);
+gl.bindRenderbuffer(gl.RENDERBUFFER, colorRenderbuffer);
+gl.renderbufferStorageMultisample(
+    gl.RENDERBUFFER,
+    gl.getParameter(gl.MAX_SAMPLES),
+    gl.RGB8,
+    fbWidth,
+    fbHeight,
+);
+gl.framebufferRenderbuffer(
+    gl.FRAMEBUFFER,
+    gl.COLOR_ATTACHMENT0,
+    gl.RENDERBUFFER,
+    colorRenderbuffer,
+);
+gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer);
+gl.renderbufferStorageMultisample(
+    gl.RENDERBUFFER,
+    gl.getParameter(gl.MAX_SAMPLES),
+    gl.DEPTH_COMPONENT16,
+    fbWidth,
+    fbHeight,
+);
+gl.framebufferRenderbuffer(
+    gl.FRAMEBUFFER,
+    gl.DEPTH_ATTACHMENT,
+    gl.RENDERBUFFER,
+    depthBuffer,
+);
+checkFramebufferStatus(gl);
+gl.bindFramebuffer(gl.FRAMEBUFFER, colorFramebuffer);
+const colorTexture = attachFramebufferColorTexture(gl, fbWidth, fbHeight);
+checkFramebufferStatus(gl);
+gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+gl.bindTexture(gl.TEXTURE_2D, null);
+
+function resizeGl(): void {
+    fbWidth = canvas.width;
+    fbHeight = canvas.height;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, renderFramebuffer);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, colorRenderbuffer);
+    gl.renderbufferStorageMultisample(
+        gl.RENDERBUFFER,
+        gl.getParameter(gl.MAX_SAMPLES),
+        gl.RGB8,
+        fbWidth,
+        fbHeight,
+    );
+    gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer);
+    gl.renderbufferStorageMultisample(
+        gl.RENDERBUFFER,
+        gl.getParameter(gl.MAX_SAMPLES),
+        gl.DEPTH_COMPONENT16,
+        fbWidth,
+        fbHeight,
+    );
+    checkFramebufferStatus(gl);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, colorFramebuffer);
+    gl.bindTexture(gl.TEXTURE_2D, colorTexture);
+    gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGB,
+        fbWidth,
+        fbHeight,
+        0,
+        gl.RGB,
+        gl.UNSIGNED_BYTE,
+        null,
+    );
+    checkFramebufferStatus(gl);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+}
+window.addEventListener('resize', throttle(resizeGl, 250));
+
 const startTime = performance.now();
 let lastTime = startTime;
 terrain.update(0);
@@ -135,6 +224,15 @@ function loop(): void {
     );
     const fogPower = 6;
     const atmosphereCutoffFactor = 0.05;
+    const sharedSkyRenderValues: Omit<
+        SkyShaderRenderParameters,
+        'viewDirProjInverseMatrix'
+    > = {
+        sunPosition,
+        atmosphereCutoffFactor,
+        downBlendingCutoff: 0.2,
+        downBlendingPower: 2,
+    };
     const sharedTerrainRenderValues: Omit<
         TerrainShaderRenderParameters,
         'clippingPlane' | 'isUsingClippingPlane' | `camera${string}`
@@ -150,7 +248,7 @@ function loop(): void {
         atmosphereCutoffFactor,
     };
     gl.bindTexture(gl.TEXTURE_2D, null);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, waterShader.reflectionFramebuffer);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, waterShader.reflectionRenderFramebuffer);
     clear();
     gl.viewport(0, 0, reflectionFramebufferWidth, reflectionFramebufferHeight);
     camera.reflectAboutY(waterHeight);
@@ -181,10 +279,30 @@ function loop(): void {
     }
     skyShader.render({
         viewDirProjInverseMatrix: calculateViewDirProjInverseMatrix(),
-        sunPosition,
-        atmosphereCutoffFactor,
+        ...sharedSkyRenderValues,
     });
-    gl.bindFramebuffer(gl.FRAMEBUFFER, waterShader.refractionFramebuffer);
+    gl.bindFramebuffer(
+        gl.READ_FRAMEBUFFER,
+        waterShader.reflectionRenderFramebuffer,
+    );
+    gl.bindFramebuffer(
+        gl.DRAW_FRAMEBUFFER,
+        waterShader.reflectionColorFramebuffer,
+    );
+    gl.clearBufferfv(gl.COLOR, 0, [1.0, 1.0, 1.0, 1.0]);
+    gl.blitFramebuffer(
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        gl.COLOR_BUFFER_BIT,
+        gl.LINEAR,
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, waterShader.refractionRenderFramebuffer);
     clear();
     gl.viewport(0, 0, refractionFramebufferWidth, refractionFramebufferHeight);
     camera.reflectAboutY(waterHeight);
@@ -198,12 +316,44 @@ function loop(): void {
     });
     skyShader.render({
         viewDirProjInverseMatrix: calculateViewDirProjInverseMatrix(),
-        sunPosition,
-        atmosphereCutoffFactor,
+        ...sharedSkyRenderValues,
     });
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindFramebuffer(
+        gl.READ_FRAMEBUFFER,
+        waterShader.refractionRenderFramebuffer,
+    );
+    gl.bindFramebuffer(
+        gl.DRAW_FRAMEBUFFER,
+        waterShader.refractionColorFramebuffer,
+    );
+    gl.clearBufferfv(gl.COLOR, 0, [1.0, 1.0, 1.0, 1.0]);
+    gl.blitFramebuffer(
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        gl.COLOR_BUFFER_BIT,
+        gl.LINEAR,
+    );
+    gl.blitFramebuffer(
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        gl.DEPTH_BUFFER_BIT,
+        gl.NEAREST,
+    );
+    gl.bindFramebuffer(gl.FRAMEBUFFER, renderFramebuffer);
     clear();
-    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.viewport(0, 0, fbWidth, fbHeight);
     terrainShader.render({
         clippingPlane: vec4.create(),
         isUsingClippingPlane: false,
@@ -227,7 +377,7 @@ function loop(): void {
         waveSpeed: 0.00003,
         waveStrength: 0.02,
         reflectivity: 2,
-        waterColor: vec3.fromValues(0.0, 0.3, 0.8),
+        waterColor: vec3.fromValues(128 / 255, 197 / 255, 222 / 255),
         waterColorStrength: 0.2,
         diffuseColor,
         sunPosition,
@@ -239,9 +389,38 @@ function loop(): void {
     });
     skyShader.render({
         viewDirProjInverseMatrix: calculateViewDirProjInverseMatrix(),
-        sunPosition,
-        atmosphereCutoffFactor,
+        ...sharedSkyRenderValues,
     });
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, renderFramebuffer);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, colorFramebuffer);
+    gl.clearBufferfv(gl.COLOR, 0, [1.0, 1.0, 1.0, 1.0]);
+    gl.blitFramebuffer(
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        gl.COLOR_BUFFER_BIT,
+        gl.LINEAR,
+    );
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, renderFramebuffer);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+    gl.clearBufferfv(gl.COLOR, 0, [1.0, 1.0, 1.0, 1.0]);
+    gl.blitFramebuffer(
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        0,
+        0,
+        fbWidth,
+        fbHeight,
+        gl.COLOR_BUFFER_BIT,
+        gl.LINEAR,
+    );
     requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

@@ -28,6 +28,7 @@ export const fogFragment = `
 vec3 applyFog(float distanceToCamera, vec3 cameraToVertex, vec3 color) {
     float fogFactor = clamp(1.0 - pow(distanceToCamera / u_fogDistance, u_fogPower), 0.0, 1.0);
     if (fogFactor <= 0.9) {
+        fogFactor /= 0.9;
         vec2 xzDir = normalize(vec2(cameraToVertex.x, cameraToVertex.z));
         vec3 fogColor = atmosphere(normalize(vec3(xzDir.x, u_atmosphereCutoffFactor, xzDir.y)));
         return mix(fogColor, color, fogFactor);

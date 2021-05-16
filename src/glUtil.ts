@@ -89,8 +89,8 @@ export function loadTexturePower2(
         gl.texImage2D(
             gl.TEXTURE_2D,
             0,
-            gl.RGBA,
-            gl.RGBA,
+            gl.RGB,
+            gl.RGB,
             gl.UNSIGNED_BYTE,
             image,
         );
@@ -100,4 +100,68 @@ export function loadTexturePower2(
     };
     image.src = src;
     return promise;
+}
+
+export function attachFramebufferColorTexture(
+    gl: WebGL2RenderingContext,
+    width: number,
+    height: number,
+): WebGLTexture {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const colorTexture = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, colorTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGB,
+        width,
+        height,
+        0,
+        gl.RGB,
+        gl.UNSIGNED_BYTE,
+        null,
+    );
+    gl.framebufferTexture2D(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.TEXTURE_2D,
+        colorTexture,
+        0,
+    );
+    return colorTexture;
+}
+
+export function checkFramebufferStatus(gl: WebGL2RenderingContext): void {
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    let error = '';
+    switch (status) {
+        case gl.FRAMEBUFFER_COMPLETE:
+            return;
+        case gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
+            error =
+                'The attachment types are mismatched or not all framebuffer attachment points are framebuffer attachment complete.';
+            break;
+        case gl.FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
+            error = 'There is no attachment.';
+            break;
+        case gl.FRAMEBUFFER_INCOMPLETE_DIMENSIONS:
+            error = 'Height and width of the attachment are not the same.';
+            break;
+        case gl.FRAMEBUFFER_UNSUPPORTED:
+            error =
+                'The format of the attachment is not supported or if depth and stencil attachments are not the same renderbuffer.';
+            break;
+        case gl.FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
+            error =
+                'The values of gl.RENDERBUFFER_SAMPLES are different among attached render buffers, or are non-zero if the attached images are a mix of render buffers and textures.';
+            break;
+        default:
+            error = `Unknown status, ${status}.`;
+            break;
+    }
+    throw new Error(`WebGL Framebuffer status check failed - ${error}`);
 }

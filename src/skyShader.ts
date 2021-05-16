@@ -100,6 +100,8 @@ in vec4 v_vertexPosition;
 uniform mat4 u_viewDirProjInverseMatrix;
 uniform vec3 u_sunPosition;
 uniform float u_atmosphereCutoffFactor;
+uniform float u_downBlendingCutoff;
+uniform float u_downBlendingPower;
 
 out vec4 out_color;
 
@@ -111,7 +113,15 @@ void main(void) {
     rayDir = normalize(rayDir);
     if (rayDir.y <= u_atmosphereCutoffFactor) {
         vec2 xzDir = normalize(vec2(rayDir.x, rayDir.z));
-        out_color = vec4(atmosphere(normalize(vec3(xzDir.x, u_atmosphereCutoffFactor, xzDir.y))), 1.0);
+        vec3 cutoffColor = atmosphere(normalize(vec3(xzDir.x, u_atmosphereCutoffFactor, xzDir.y)));
+        if (rayDir.y <= u_downBlendingCutoff - 1.0) {
+            float blend = 1.0 - pow(1.0 - (rayDir.y + 1.0) / u_downBlendingCutoff, u_downBlendingPower);
+            vec2 xzSun = normalize(vec2(u_sunPosition.x, u_sunPosition.z));
+            vec3 blendColor = atmosphere(normalize(vec3(-xzSun.y, u_atmosphereCutoffFactor, xzSun.x)));
+            out_color = vec4(vec3(mix(blendColor, cutoffColor, blend)), 1.0);
+            return;
+        }
+        out_color = vec4(cutoffColor, 1.0);
         return;
     }
     out_color = vec4(atmosphere(rayDir), 1.0);
@@ -124,6 +134,8 @@ const uniforms = {
     u_viewDirProjInverseMatrix: true,
     u_sunPosition: true,
     u_atmosphereCutoffFactor: true,
+    u_downBlendingCutoff: true,
+    u_downBlendingPower: true,
 } as const;
 
 export type SkyShaderLocations = Locations<typeof attribs, typeof uniforms>;
@@ -137,6 +149,8 @@ export interface SkyShaderRenderParameters {
     viewDirProjInverseMatrix: mat4;
     sunPosition: vec3;
     atmosphereCutoffFactor: number;
+    downBlendingCutoff: number;
+    downBlendingPower: number;
 }
 
 export function makeSkyShader(gl: WebGL2RenderingContext): SkyShader {
@@ -172,6 +186,8 @@ export function makeSkyShader(gl: WebGL2RenderingContext): SkyShader {
             viewDirProjInverseMatrix,
             sunPosition,
             atmosphereCutoffFactor,
+            downBlendingCutoff,
+            downBlendingPower,
         } = parameters;
         gl.useProgram(program);
         gl.uniformMatrix4fv(
@@ -184,6 +200,11 @@ export function makeSkyShader(gl: WebGL2RenderingContext): SkyShader {
             locations.uniforms.u_atmosphereCutoffFactor,
             atmosphereCutoffFactor,
         );
+        gl.uniform1f(
+            locations.uniforms.u_downBlendingCutoff,
+            downBlendingCutoff,
+        );
+        gl.uniform1f(locations.uniforms.u_downBlendingPower, downBlendingPower);
         gl.depthFunc(gl.LEQUAL);
         gl.bindVertexArray(vao);
         gl.drawArrays(gl.TRIANGLES, 0, 6);

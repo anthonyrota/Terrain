@@ -1,5 +1,11 @@
 import { vec3, mat4 } from 'gl-matrix';
-import { initProgram, calculateLocations, Locations } from './glUtil';
+import {
+    initProgram,
+    calculateLocations,
+    Locations,
+    attachFramebufferColorTexture,
+    checkFramebufferStatus,
+} from './glUtil';
 import { atmosphereFragment } from './skyShader';
 import { TerrainChunk } from './TerrainChunk';
 import { fogFragment } from './terrainShader';
@@ -140,8 +146,10 @@ export type WaterShaderLocations = Locations<typeof attribs, typeof uniforms>;
 export interface WaterShader {
     render(parameters: WaterShaderRenderParameters): void;
     locations: WaterShaderLocations;
-    reflectionFramebuffer: WebGLFramebuffer;
-    refractionFramebuffer: WebGLFramebuffer;
+    reflectionRenderFramebuffer: WebGLFramebuffer;
+    reflectionColorFramebuffer: WebGLFramebuffer;
+    refractionRenderFramebuffer: WebGLFramebuffer;
+    refractionColorFramebuffer: WebGLFramebuffer;
 }
 
 export interface WaterShaderParameters {
@@ -191,77 +199,31 @@ export function makeWaterShader(
     const program = initProgram(gl, vertexSource, fragmentSource);
     const locations = calculateLocations(gl, program, attribs, uniforms);
 
-    function attachColorTexture(width: number, height: number): WebGLTexture {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        const colorTexture = gl.createTexture()!;
-        gl.bindTexture(gl.TEXTURE_2D, colorTexture);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texImage2D(
-            gl.TEXTURE_2D,
-            0,
-            gl.RGBA,
-            width,
-            height,
-            0,
-            gl.RGBA,
-            gl.UNSIGNED_BYTE,
-            null,
-        );
-        gl.framebufferTexture2D(
-            gl.FRAMEBUFFER,
-            gl.COLOR_ATTACHMENT0,
-            gl.TEXTURE_2D,
-            colorTexture,
-            0,
-        );
-        return colorTexture;
-    }
-
-    function checkFramebufferStatus(): void {
-        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-        let error = '';
-        switch (status) {
-            case gl.FRAMEBUFFER_COMPLETE:
-                return;
-            case gl.FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
-                error =
-                    'The attachment types are mismatched or not all framebuffer attachment points are framebuffer attachment complete.';
-                break;
-            case gl.FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT:
-                error = 'There is no attachment.';
-                break;
-            case gl.FRAMEBUFFER_INCOMPLETE_DIMENSIONS:
-                error = 'Height and width of the attachment are not the same.';
-                break;
-            case gl.FRAMEBUFFER_UNSUPPORTED:
-                error =
-                    'The format of the attachment is not supported or if depth and stencil attachments are not the same renderbuffer.';
-                break;
-            case gl.FRAMEBUFFER_INCOMPLETE_MULTISAMPLE:
-                error =
-                    'The values of gl.RENDERBUFFER_SAMPLES are different among attached render buffers, or are non-zero if the attached images are a mix of render buffers and textures.';
-                break;
-            default:
-                error = `Unknown status, ${status}.`;
-                break;
-        }
-        throw new Error(`WebGL Framebuffer status check failed - ${error}`);
-    }
-
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const reflectionFramebuffer = gl.createFramebuffer()!;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, reflectionFramebuffer);
-    const reflectionColorTexture = attachColorTexture(
+    const reflectionRenderFramebuffer = gl.createFramebuffer()!;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const reflectionColorFramebuffer = gl.createFramebuffer()!;
+    const reflectionColorRenderbuffer = gl.createRenderbuffer();
+    const reflectionDepthBuffer = gl.createRenderbuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, reflectionRenderFramebuffer);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, reflectionColorRenderbuffer);
+    gl.renderbufferStorageMultisample(
+        gl.RENDERBUFFER,
+        gl.getParameter(gl.MAX_SAMPLES),
+        gl.RGB8,
         reflectionFramebufferWidth,
         reflectionFramebufferHeight,
     );
-    const reflectionDepthBuffer = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, reflectionDepthBuffer);
-    gl.renderbufferStorage(
+    gl.framebufferRenderbuffer(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
         gl.RENDERBUFFER,
+        reflectionColorRenderbuffer,
+    );
+    gl.bindRenderbuffer(gl.RENDERBUFFER, reflectionDepthBuffer);
+    gl.renderbufferStorageMultisample(
+        gl.RENDERBUFFER,
+        gl.getParameter(gl.MAX_SAMPLES),
         gl.DEPTH_COMPONENT16,
         reflectionFramebufferWidth,
         reflectionFramebufferHeight,
@@ -272,16 +234,59 @@ export function makeWaterShader(
         gl.RENDERBUFFER,
         reflectionDepthBuffer,
     );
-    checkFramebufferStatus();
+    checkFramebufferStatus(gl);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, reflectionColorFramebuffer);
+    const reflectionColorTexture = attachFramebufferColorTexture(
+        gl,
+        reflectionFramebufferWidth,
+        reflectionFramebufferHeight,
+    );
+    checkFramebufferStatus(gl);
+
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const refractionFramebuffer = gl.createFramebuffer()!;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, refractionFramebuffer);
-    const refractionColorTexture = attachColorTexture(
+    const refractionRenderFramebuffer = gl.createFramebuffer()!;
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    const refractionColorFramebuffer = gl.createFramebuffer()!;
+    const refractionColorRenderbuffer = gl.createRenderbuffer();
+    const refractionDepthBuffer = gl.createRenderbuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, refractionRenderFramebuffer);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, refractionColorRenderbuffer);
+    gl.renderbufferStorageMultisample(
+        gl.RENDERBUFFER,
+        gl.getParameter(gl.MAX_SAMPLES),
+        gl.RGB8,
         refractionFramebufferWidth,
         refractionFramebufferHeight,
     );
-    const depthTexture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, depthTexture);
+    gl.framebufferRenderbuffer(
+        gl.FRAMEBUFFER,
+        gl.COLOR_ATTACHMENT0,
+        gl.RENDERBUFFER,
+        refractionColorRenderbuffer,
+    );
+    gl.bindRenderbuffer(gl.RENDERBUFFER, refractionDepthBuffer);
+    gl.renderbufferStorageMultisample(
+        gl.RENDERBUFFER,
+        gl.getParameter(gl.MAX_SAMPLES),
+        gl.DEPTH_COMPONENT16,
+        refractionFramebufferWidth,
+        refractionFramebufferHeight,
+    );
+    gl.framebufferRenderbuffer(
+        gl.FRAMEBUFFER,
+        gl.DEPTH_ATTACHMENT,
+        gl.RENDERBUFFER,
+        refractionDepthBuffer,
+    );
+    checkFramebufferStatus(gl);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, refractionColorFramebuffer);
+    const refractionColorTexture = attachFramebufferColorTexture(
+        gl,
+        refractionFramebufferWidth,
+        refractionFramebufferHeight,
+    );
+    const refractionDepthTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, refractionDepthTexture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -301,10 +306,11 @@ export function makeWaterShader(
         gl.FRAMEBUFFER,
         gl.DEPTH_ATTACHMENT,
         gl.TEXTURE_2D,
-        depthTexture,
+        refractionDepthTexture,
         0,
     );
-    checkFramebufferStatus();
+    checkFramebufferStatus(gl);
+
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
 
@@ -364,7 +370,7 @@ export function makeWaterShader(
         gl.bindTexture(gl.TEXTURE_2D, normalTexture);
         gl.uniform1i(locations.uniforms.u_normalTexture, 3);
         gl.activeTexture(gl.TEXTURE4);
-        gl.bindTexture(gl.TEXTURE_2D, depthTexture);
+        gl.bindTexture(gl.TEXTURE_2D, refractionDepthTexture);
         gl.uniform1i(locations.uniforms.u_depthTexture, 4);
         gl.uniform1f(locations.uniforms.u_near, near);
         gl.uniform1f(locations.uniforms.u_far, far);
@@ -412,7 +418,9 @@ export function makeWaterShader(
     return {
         render,
         locations,
-        reflectionFramebuffer,
-        refractionFramebuffer,
+        reflectionRenderFramebuffer,
+        reflectionColorFramebuffer,
+        refractionRenderFramebuffer,
+        refractionColorFramebuffer,
     };
 }
