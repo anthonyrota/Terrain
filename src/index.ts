@@ -30,7 +30,7 @@ if (!gl) {
     throw new Error('WebGL2 not supported.');
 }
 
-const playerHeight = 2.5;
+const playerHeight = 1.25;
 
 function getCanCameraJump(): boolean {
     return (
@@ -47,10 +47,10 @@ const camera = new FirstPersonCamera({
     gravity: 600,
     horizontalDrag: 0.8 / 1000,
     fov: toRadians(75),
-    sensitivity: 180 / 50000,
+    sensitivity: 180 / 80000,
     aspect: canvas.width / canvas.height,
     near: 0.1,
-    far: 1000,
+    far: 1024,
     getCanJump: getCanCameraJump,
 });
 
@@ -58,9 +58,9 @@ const waterHeight = MAX_HEIGHT * EROSION_OCEAN_HEIGHT;
 
 const skyShader = makeSkyShader(gl);
 const terrainShader = makeTerrainShader(gl);
-const reflectionFramebufferWidth = 512;
+const reflectionFramebufferWidth = 768;
 const reflectionFramebufferHeight = 512;
-const refractionFramebufferWidth = 512;
+const refractionFramebufferWidth = 768;
 const refractionFramebufferHeight = 512;
 const waterShader = makeWaterShader(gl, {
     reflectionFramebufferWidth,
@@ -205,8 +205,8 @@ function loop(): void {
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     const terrainChunks = terrain.getVisibleLoadedChunks(camera.frustum);
     const diffuseColor = vec3.fromValues(0.6, 0.6, 0.74);
-    const sunRepetition = 50000;
-    const sunDaySpeedupFactor = 0.867;
+    const sunRepetition = 250000;
+    const sunDaySpeedupFactor = 0.975;
     const sunAngleFactor = ((now - startTime) % sunRepetition) / sunRepetition;
     let sunAngle: number;
     if (sunAngleFactor <= sunDaySpeedupFactor) {

@@ -12,6 +12,10 @@ struct ColorRegion {
     blend: f32,
 }
 
+// const SIZE: u32 = 256;
+// const HEIGHT_MAP_ARRAY_LENGTH: usize = 66049;
+// const VERTEX_ARRAY_LENGTH: usize = 198147;
+// const INDICES_ARRAY_LENGTH: usize = 393216;
 const SIZE: u32 = 512;
 const HEIGHT_MAP_ARRAY_LENGTH: usize = 263169;
 const VERTEX_ARRAY_LENGTH: usize = 789507;
@@ -46,45 +50,41 @@ static COLOR_REGIONS: [ColorRegion; COLOR_REGIONS_ARRAY_LENGTH] = [
     },
     ColorRegion {
         max_height: 0.374,
-        color: RGB(229, 219, 164),
-        blend: 0.6,
+        color: RGB(120, 127, 160),
+        blend: 1.0,
     },
     ColorRegion {
         max_height: 0.571,
-        color: RGB(135, 184, 82),
-        blend: 0.6,
+        color: RGB(90, 91, 98),
+        blend: 1.0,
     },
     ColorRegion {
-        max_height: 0.786,
-        color: RGB(120, 120, 120),
-        blend: 0.6,
+        max_height: 0.846,
+        color: RGB(193, 198, 214),
+        blend: 1.0,
     },
     ColorRegion {
         max_height: 1.0,
-        color: RGB(200, 200, 210),
-        blend: 0.6,
+        color: RGB(235, 236, 240),
+        blend: 1.0,
     },
 ];
 const EROSION_DROPS_PER_CELL: f32 = 1.2;
-const EROSION_INITIAL_WATER_AMOUNT: f32 = 1.0;
-const EROSION_WATER_EVAPORATION_RATE: f32 = 0.01;
-const EROSION_EROSION_RATE: f32 = 0.3;
-const EROSION_DEPOSITION_RATE: f32 = 0.15;
-const MAX_DEPOSITION: f32 = 0.6;
-const EROSION_SEDIMENT_CAPACITY_FACTOR: f32 = 10.0;
-const EROSION_MIN_SEDIMENT_CAPACITY: f32 = 0.02;
-const EROSION_INITIAL_SPEED: f32 = 0.4;
-const EROSION_SPEED: f32 = 0.1;
-const EROSION_STOP_SPEED: f32 = 0.01;
-const EROSION_MAX_SPEED: f32 = 0.7;
-const EROSION_FRICTION: f32 = 0.7;
-const EROSION_RADIUS: f32 = 0.8;
-const EROSION_MAX_RAIN_ITERATIONS: u32 = 800;
-const EROSION_OCEAN_HEIGHT: f32 = 0.37;
-const EROSION_OCEAN_SLOWDOWN: f32 = 3.0;
-const EROSION_EDGE_DAMP_MIN_DISTANCE: f32 = 3.0;
+const EROSION_EDGE_DAMP_MIN_DISTANCE: f32 = 2.0;
 const EROSION_EDGE_DAMP_MAX_DISTANCE: f32 = 10.0;
 const EROSION_EDGE_DAMP_STRENGTH: f32 = 3.0;
+const EROSION_INERTIA: f32 = 0.05;
+const EROSION_SEDIMENT_CAPACITY_FACTOR: f32 = 1.0;
+const EROSION_MIN_SEDIMENT_CAPACITY: f32 = 0.1;
+const EROSION_ERODE_SPEED: f32 = 0.3;
+const EROSION_DEPOSIT_SPEED: f32 = 0.5;
+const EROSION_EVAPORATE_SPEED: f32 = 0.01;
+const EROSION_GRAVITY: f32 = 0.2;
+const EROSION_MAX_DROPLET_LIFETIME: i32 = 512;
+const EROSION_STOP_HEIGHT_START: f32 = 0.37;
+const EROSION_STOP_HEIGHT_END: f32 = 0.34;
+const EROSION_INITIAL_WATER_VOLUME: f32 = 1.0;
+const EROSION_INITIAL_SPEED: f32 = 4.0;
 const EROSION_KERNEL_RADIUS: i32 = 2;
 const EROSION_KERNEL_ARRAY_SIZE: usize = 25;
 type ErosionKernelArray = [f32; EROSION_KERNEL_ARRAY_SIZE];
@@ -248,66 +248,30 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
             return height_left + (height_right - height_left) * grid_offset_x;
         }
 
-        fn add_height_interpolated(x: f32, z: f32, amount: f32, height_map: &mut HeightMapArray) {
-            let floor_x = x.floor() as usize;
-            let floor_z = z.floor() as usize;
-
-            let grid_offset_x = x - floor_x as f32;
-            let grid_offset_z = z - floor_z as f32;
-
-            let tl = floor_z * (CHUNK_WIDTH as usize + 1) + floor_x;
-            let tr = floor_z * (CHUNK_WIDTH as usize + 1) + (floor_x + 1);
-            let bl = (floor_z + 1) * (CHUNK_WIDTH as usize + 1) + floor_x;
-            let br = (floor_z + 1) * (CHUNK_WIDTH as usize + 1) + (floor_x + 1);
-
-            height_map[tl] = min(
-                MAX_HEIGHT,
-                height_map[tl] + grid_offset_x * grid_offset_z * amount,
-            );
-            height_map[tr] = min(
-                MAX_HEIGHT,
-                height_map[tr] + (1.0 - grid_offset_x) * grid_offset_z * amount,
-            );
-            height_map[br] = min(
-                MAX_HEIGHT,
-                height_map[br] + (1.0 - grid_offset_x) * (1.0 - grid_offset_z) * amount,
-            );
-            height_map[bl] = min(
-                MAX_HEIGHT,
-                height_map[bl] + grid_offset_x * (1.0 - grid_offset_z) * amount,
-            );
-        }
-
-        let start_x = rng.gen_range(0.0, CHUNK_WIDTH as f32);
-        let start_z = rng.gen_range(0.0, CHUNK_DEPTH as f32);
-        let offset_x = rng.gen_range(-EROSION_RADIUS, EROSION_RADIUS);
-        let offset_z = rng.gen_range(-EROSION_RADIUS, EROSION_RADIUS);
-        let mut water: f32 = EROSION_INITIAL_WATER_AMOUNT;
+        let mut x = rng.gen_range(0.0, CHUNK_WIDTH as f32);
+        let mut z = rng.gen_range(0.0, CHUNK_DEPTH as f32);
+        let mut dir_x: f32 = 0.0;
+        let mut dir_z: f32 = 0.0;
+        let mut speed: f32 = EROSION_INITIAL_SPEED;
+        let mut water: f32 = EROSION_INITIAL_WATER_VOLUME;
         let mut sediment: f32 = 0.0;
-        let mut x = start_x;
-        let mut z = start_z;
-        let mut prev_x = start_x;
-        let mut prev_z = start_z;
-        let mut vel_x: f32 = rng.gen_range(-EROSION_INITIAL_SPEED, EROSION_INITIAL_SPEED);
-        let mut vel_z: f32 = rng.gen_range(-EROSION_INITIAL_SPEED, EROSION_INITIAL_SPEED);
 
-        for _ in 0..EROSION_MAX_RAIN_ITERATIONS {
-            let cur_x = x + offset_x;
-            let cur_z = z + offset_z;
-
-            if cur_x < 1.0
-                || cur_z < 1.0
-                || cur_x + 1.0 >= CHUNK_WIDTH as f32
-                || cur_z + 1.0 >= CHUNK_WIDTH as f32
+        for _ in 0..EROSION_MAX_DROPLET_LIFETIME {
+            if x < 1.0 || z < 1.0 || x + 1.0 >= CHUNK_WIDTH as f32 || z + 1.0 >= CHUNK_WIDTH as f32
             {
                 break;
             }
 
-            let cur_y = get_height_interpolated(cur_x, cur_z, height_map);
-            let left = get_height_interpolated(cur_x - 1.0, cur_z, height_map);
-            let top = get_height_interpolated(cur_x, cur_z - 1.0, height_map);
-            let right = get_height_interpolated(cur_x + 1.0, cur_z, height_map);
-            let bottom = get_height_interpolated(cur_x, cur_z + 1.0, height_map);
+            let cur_y = get_height_interpolated(x, z, height_map);
+
+            if cur_y / MAX_HEIGHT <= EROSION_STOP_HEIGHT_END {
+                break;
+            }
+
+            let left = get_height_interpolated(x - 1.0, z, height_map);
+            let top = get_height_interpolated(x, z - 1.0, height_map);
+            let right = get_height_interpolated(x + 1.0, z, height_map);
+            let bottom = get_height_interpolated(x, z + 1.0, height_map);
 
             let mut norm_x = left - right;
             let mut norm_y: f32 = 2.0;
@@ -323,28 +287,19 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
                 break;
             }
 
-            vel_x = EROSION_FRICTION * vel_x + norm_x * EROSION_SPEED;
-            vel_z = EROSION_FRICTION * vel_z + norm_z * EROSION_SPEED;
-            let water_slowdown_factor = (min(EROSION_OCEAN_HEIGHT * MAX_HEIGHT, cur_y)
-                / (EROSION_OCEAN_HEIGHT * MAX_HEIGHT))
-                .powf(EROSION_OCEAN_SLOWDOWN);
-            vel_x *= water_slowdown_factor;
-            vel_z *= water_slowdown_factor;
-            let vel_sqr = vel_x * vel_x + vel_z * vel_z;
-            if vel_sqr < EROSION_STOP_SPEED * EROSION_STOP_SPEED {
+            let prev_x = x;
+            let prev_z = z;
+            dir_x = dir_x * EROSION_INERTIA + norm_x * (1.0 - EROSION_INERTIA);
+            dir_z = dir_z * EROSION_INERTIA + norm_z * (1.0 - EROSION_INERTIA);
+            if dir_x == 0.0 && dir_z == 0.0 {
                 break;
             }
-            if vel_sqr > EROSION_MAX_SPEED * EROSION_MAX_SPEED {
-                let vel = vel_sqr.sqrt();
-                let scale = EROSION_MAX_SPEED / vel;
-                vel_x *= scale;
-                vel_z *= scale;
-            }
-            let _prev_x = x;
-            let _prev_z = z;
-            x += vel_x;
-            z += vel_z;
-            water *= 1.0 - EROSION_WATER_EVAPORATION_RATE;
+            let len = (dir_x * dir_x + dir_z * dir_z).sqrt();
+            dir_x /= len;
+            dir_z /= len;
+            x += dir_x;
+            z += dir_z;
+            let delta_height = get_height_interpolated(x, z, height_map) - cur_y;
 
             let dist_to_edge = min(
                 prev_x,
@@ -353,74 +308,90 @@ pub fn gen_chunk_data(chunk_x: i32, chunk_z: i32) -> ChunkData {
                     min(CHUNK_WIDTH as f32 - prev_x, CHUNK_DEPTH as f32 - prev_z),
                 ),
             );
-            if dist_to_edge > EROSION_EDGE_DAMP_MIN_DISTANCE {
-                let damp_factor = if dist_to_edge <= EROSION_EDGE_DAMP_MAX_DISTANCE {
-                    ((dist_to_edge - EROSION_EDGE_DAMP_MIN_DISTANCE)
-                        / (EROSION_EDGE_DAMP_MAX_DISTANCE - EROSION_EDGE_DAMP_MIN_DISTANCE))
-                        .powf(EROSION_EDGE_DAMP_STRENGTH)
-                } else {
-                    1.0
-                };
-                let delta_height =
-                    get_height_interpolated(x + offset_x, z + offset_z, height_map) - cur_y;
-                let speed = (vel_x * vel_x + vel_z * vel_z).sqrt();
-
-                // Based off https://github.com/SebLague/Hydraulic-Erosion
-                // MIT License
-                // Copyright (c) 2019 Sebastian Lague
-                // Permission is hereby granted, free of charge, to any person obtaining a copy
-                // of this software and associated documentation files (the "Software"), to deal
-                // in the Software without restriction, including without limitation the rights
-                // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-                // copies of the Software, and to permit persons to whom the Software is
-                // furnished to do so, subject to the following conditions:
-                // The above copyright notice and this permission notice shall be included in all
-                // copies or substantial portions of the Software.
-                // Calculate the droplet's sediment capacity (higher when moving fast down a slope and contains lots of water)
-                let sediment_capacity = max(
-                    -delta_height * speed * water * EROSION_SEDIMENT_CAPACITY_FACTOR,
-                    EROSION_MIN_SEDIMENT_CAPACITY,
-                );
-
-                // If carrying more sediment than capacity, or if flowing uphill:
-                if sediment > sediment_capacity || delta_height > 0.0 {
-                    // If moving uphill (deltaHeight > 0) try fill up to the current height, otherwise deposit a fraction of the excess sediment
-                    let amount_to_deposit = min(
-                        damp_factor
-                            * (if delta_height > 0.0 {
-                                min(delta_height, sediment)
-                            } else {
-                                (sediment - sediment_capacity) * EROSION_DEPOSITION_RATE
-                            }),
-                        MAX_DEPOSITION,
-                    );
-                    sediment -= amount_to_deposit;
-                    add_height_interpolated(prev_x, prev_z, amount_to_deposit, height_map);
-                } else {
-                    // Erode a fraction of the droplet's current carry capacity.
-                    // Clamp the erosion to the change in height so that it doesn't dig a hole in the terrain behind the droplet
-                    let amount_to_erode = damp_factor
-                        * min(
-                            (sediment_capacity - sediment) * EROSION_EROSION_RATE,
-                            -delta_height,
-                        );
-                    for dz in (-EROSION_KERNEL_RADIUS)..=EROSION_KERNEL_RADIUS {
-                        for dx in (-EROSION_KERNEL_RADIUS)..=EROSION_KERNEL_RADIUS {
-                            let weight = EROSION_KERNEL[((dz + EROSION_KERNEL_RADIUS)
-                                * (EROSION_KERNEL_RADIUS * 2 + 1)
-                                + (dx + EROSION_KERNEL_RADIUS))
-                                as usize];
-                            let idx = (prev_z.floor() as usize + dz as usize) * (SIZE as usize + 1)
-                                + (prev_x.floor() as usize + dx as usize);
-                            height_map[idx] = max(0.0, height_map[idx] - amount_to_erode * weight);
-                        }
-                    }
-                    sediment += amount_to_erode;
-                }
+            if dist_to_edge <= EROSION_EDGE_DAMP_MIN_DISTANCE {
+                break;
             }
 
-            prev_x = _prev_x;
-            prev_z = _prev_z;
+            let mut damp_factor = if dist_to_edge <= EROSION_EDGE_DAMP_MAX_DISTANCE {
+                ((dist_to_edge - EROSION_EDGE_DAMP_MIN_DISTANCE)
+                    / (EROSION_EDGE_DAMP_MAX_DISTANCE - EROSION_EDGE_DAMP_MIN_DISTANCE))
+                    .powf(EROSION_EDGE_DAMP_STRENGTH)
+            } else {
+                1.0
+            };
+
+            // Based off https://github.com/SebLague/Hydraulic-Erosion
+            // MIT License
+            // Copyright (c) 2019 Sebastian Lague
+            // Permission is hereby granted, free of charge, to any person obtaining a copy
+            // of this software and associated documentation files (the "Software"), to deal
+            // in the Software without restriction, including without limitation the rights
+            // to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+            // copies of the Software, and to permit persons to whom the Software is
+            // furnished to do so, subject to the following conditions:
+            // The above copyright notice and this permission notice shall be included in all
+            // copies or substantial portions of the Software.
+            // Calculate the droplet's sediment capacity (higher when moving fast down a slope and contains lots of water)
+            let sediment_capacity = max(
+                -delta_height * speed * water * EROSION_SEDIMENT_CAPACITY_FACTOR,
+                EROSION_MIN_SEDIMENT_CAPACITY,
+            );
+
+            damp_factor *= min(
+                ((cur_y / MAX_HEIGHT) - EROSION_STOP_HEIGHT_END)
+                    / (EROSION_STOP_HEIGHT_START - EROSION_STOP_HEIGHT_END),
+                1.0,
+            );
+
+            // If carrying more sediment than capacity, or if flowing uphill:
+            if sediment > sediment_capacity || delta_height > 0.0 {
+                // If moving uphill (deltaHeight > 0) try fill up to the current height, otherwise deposit a fraction of the excess sediment
+                let amount_to_deposit = damp_factor
+                    * (if delta_height > 0.0 {
+                        min(delta_height, sediment)
+                    } else {
+                        (sediment - sediment_capacity) * EROSION_DEPOSIT_SPEED
+                    });
+
+                let floor_x = prev_x.floor() as usize;
+                let floor_z = prev_z.floor() as usize;
+                let grid_offset_x = prev_x - floor_x as f32;
+                let grid_offset_z = prev_z - floor_z as f32;
+
+                height_map[floor_z * (CHUNK_WIDTH as usize + 1) + floor_x] +=
+                    amount_to_deposit * (1.0 - grid_offset_x) * (1.0 - grid_offset_z);
+                height_map[floor_z * (CHUNK_WIDTH as usize + 1) + (floor_x + 1)] +=
+                    amount_to_deposit * grid_offset_x * (1.0 - grid_offset_z);
+                height_map[(floor_z + 1) * (CHUNK_WIDTH as usize + 1) + floor_x] +=
+                    amount_to_deposit * (1.0 - grid_offset_x) * grid_offset_z;
+                height_map[(floor_z + 1) * (CHUNK_WIDTH as usize + 1) + (floor_x + 1)] +=
+                    amount_to_deposit * grid_offset_x * grid_offset_z;
+
+                sediment -= amount_to_deposit;
+            } else {
+                // Erode a fraction of the droplet's current carry capacity.
+                // Clamp the erosion to the change in height so that it doesn't dig a hole in the terrain behind the droplet
+                let amount_to_erode = damp_factor
+                    * min(
+                        (sediment_capacity - sediment) * EROSION_ERODE_SPEED,
+                        -delta_height,
+                    );
+                for dz in (-EROSION_KERNEL_RADIUS)..=EROSION_KERNEL_RADIUS {
+                    for dx in (-EROSION_KERNEL_RADIUS)..=EROSION_KERNEL_RADIUS {
+                        let weight = EROSION_KERNEL[((dz + EROSION_KERNEL_RADIUS)
+                            * (EROSION_KERNEL_RADIUS * 2 + 1)
+                            + (dx + EROSION_KERNEL_RADIUS))
+                            as usize];
+                        let idx = (prev_z.floor() as usize + dz as usize) * (SIZE as usize + 1)
+                            + (prev_x.floor() as usize + dx as usize);
+                        height_map[idx] = max(0.0, height_map[idx] - amount_to_erode * weight);
+                    }
+                }
+                sediment += amount_to_erode;
+            }
+
+            speed = max(speed * speed + delta_height * EROSION_GRAVITY, 0.0).sqrt();
+            water *= 1.0 - EROSION_EVAPORATE_SPEED;
         }
     }
 
