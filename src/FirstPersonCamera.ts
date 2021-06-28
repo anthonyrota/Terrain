@@ -11,13 +11,19 @@ export interface FirstPersonCameraParameters {
     verticalSpeed: number;
     maxFallSpeed: number;
     gravity: number;
+    buoyancyFactor: number;
+    maxFloatSpeed: number;
     horizontalDrag: number;
     sensitivity: number;
     fov: number;
     aspect: number;
     near: number;
     far: number;
+    getIsOnFloor: () => boolean;
     getCanJump: () => boolean;
+    getIsUnderwater: () => boolean;
+    getRequiresFloating: () => boolean;
+    floatingSlowdown: number;
 }
 
 const MOVEMENT_KEYS = [
@@ -65,13 +71,19 @@ export class FirstPersonCamera extends Disposable {
     private _verticalSpeed: number;
     private _maxFallSpeed: number;
     private _gravity: number;
+    private _buoyancyFactor: number;
+    private _maxFloatSpeed: number;
     private _horizontalDrag: number;
     private _sensitivity: number;
     private _fov: number;
     private _aspect: number;
     private _near: number;
     private _far: number;
+    private _getIsOnFloor: () => boolean;
     private _getCanJump: () => boolean;
+    private _getIsUnderwater: () => boolean;
+    private _getRequiresFloating: () => boolean;
+    private _floatingSlowdown: number;
 
     public set fov(value: number) {
         this._fov = value;
@@ -132,26 +144,38 @@ export class FirstPersonCamera extends Disposable {
             verticalSpeed,
             maxFallSpeed,
             gravity,
-            horizontalDrag: drag,
+            buoyancyFactor,
+            maxFloatSpeed,
+            horizontalDrag,
             sensitivity,
             fov,
             aspect,
             near,
             far,
+            getIsOnFloor,
             getCanJump,
+            getIsUnderwater,
+            getRequiresFloating,
+            floatingSlowdown,
         } = parameters;
 
         this._horizontalSpeed = horizontalSpeed;
         this._verticalSpeed = verticalSpeed;
         this._maxFallSpeed = maxFallSpeed;
         this._gravity = gravity;
-        this._horizontalDrag = drag;
+        this._buoyancyFactor = buoyancyFactor;
+        this._maxFloatSpeed = maxFloatSpeed;
+        this._horizontalDrag = horizontalDrag;
         this._sensitivity = sensitivity;
         this._fov = fov;
         this._aspect = aspect;
         this._near = near;
         this._far = far;
+        this._getIsOnFloor = getIsOnFloor;
         this._getCanJump = getCanJump;
+        this._getIsUnderwater = getIsUnderwater;
+        this._getRequiresFloating = getRequiresFloating;
+        this._floatingSlowdown = floatingSlowdown;
 
         let eventsDisposable = new Disposable();
         this.add(this._keyControls);
@@ -196,12 +220,25 @@ export class FirstPersonCamera extends Disposable {
                         this._rotation[1],
                     );
                     vec3.scale(temp, temp, this._horizontalSpeed * dt);
+                    if (this._getRequiresFloating()) {
+                        vec3.scale(temp, temp, this._floatingSlowdown);
+                    }
                     vec3.add(this._velocity, this._velocity, temp);
                 }
             });
         });
 
-        this._velocity[1] -= this._gravity * dt;
+        if (this._getIsUnderwater() && this._getRequiresFloating()) {
+            if (this._getIsOnFloor() && this._velocity[1] < 0) {
+                this._velocity[1] = 0;
+            }
+            this._velocity[1] += this._buoyancyFactor * this._gravity * dt;
+            if (this._velocity[1] > this._maxFloatSpeed) {
+                this._velocity[1] = this._maxFloatSpeed;
+            }
+        } else {
+            this._velocity[1] -= this._gravity * dt;
+        }
         if (this._velocity[1] < -this._maxFallSpeed) {
             this._velocity[1] = -this._maxFallSpeed;
         }

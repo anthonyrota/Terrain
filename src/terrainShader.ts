@@ -81,7 +81,7 @@ void main(void) {
     vec3 normal = normalize(v_vertexNormal);
     vec3 specularLighting = calculateSpecularLighting(toCameraVector, toLightVector, normal);
     vec3 diffuseLighting = calculateDiffuseLighting(toLightVector, normal);
-    vec3 vertexColor = v_vertexColor * (u_ambientColor + (diffuseLighting + specularLighting));
+    vec3 vertexColor = v_vertexColor * (u_ambientColor + diffuseLighting + specularLighting);
     float distanceToCamera = length(u_cameraPosition - v_vertexPosition);
     out_color = vec4(applyFog(distanceToCamera, -toCameraVector, vertexColor), 1.0);
 }`;

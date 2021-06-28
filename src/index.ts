@@ -30,12 +30,27 @@ if (!gl) {
     throw new Error('WebGL2 not supported.');
 }
 
-const playerHeight = 1.25;
+const playerHeight = 2.5;
 
-function getCanCameraJump(): boolean {
+function getIsOnFloor(): boolean {
     return (
         camera.y - playerHeight <=
         terrain.getHeightAtPlayerPosition(camera.x, camera.z) + 0.2
+    );
+}
+
+function getCanJump(): boolean {
+    return getIsOnFloor() && !getIsUnderwater();
+}
+
+function getIsUnderwater(): boolean {
+    return camera.y <= waterHeight + 15;
+}
+
+function getRequiresFloating(): boolean {
+    return (
+        terrain.getHeightAtPlayerPosition(camera.x, camera.z) + playerHeight <=
+            waterHeight && camera.y <= waterHeight + 18
     );
 }
 
@@ -45,13 +60,19 @@ const camera = new FirstPersonCamera({
     verticalSpeed: 300,
     maxFallSpeed: 600,
     gravity: 600,
+    buoyancyFactor: 1 / 5,
+    maxFloatSpeed: 50,
     horizontalDrag: 0.8 / 1000,
     fov: toRadians(75),
     sensitivity: 180 / 80000,
     aspect: canvas.width / canvas.height,
     near: 0.1,
     far: 1024,
-    getCanJump: getCanCameraJump,
+    getIsOnFloor,
+    getCanJump,
+    getIsUnderwater,
+    getRequiresFloating,
+    floatingSlowdown: 0.5,
 });
 
 const waterHeight = MAX_HEIGHT * EROSION_OCEAN_HEIGHT;
@@ -233,6 +254,7 @@ function loop(): void {
         downBlendingCutoff: 0.2,
         downBlendingPower: 2,
     };
+    const waterColor = vec3.fromValues(128 / 255, 197 / 255, 222 / 255);
     const sharedTerrainRenderValues: Omit<
         TerrainShaderRenderParameters,
         'clippingPlane' | 'isUsingClippingPlane' | `camera${string}`
@@ -377,7 +399,7 @@ function loop(): void {
         waveSpeed: 0.00003,
         waveStrength: 0.02,
         reflectivity: 2,
-        waterColor: vec3.fromValues(128 / 255, 197 / 255, 222 / 255),
+        waterColor,
         waterColorStrength: 0.2,
         diffuseColor,
         sunPosition,
