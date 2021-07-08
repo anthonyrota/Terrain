@@ -208,20 +208,13 @@ window.addEventListener('resize', throttle(resizeGl, 250));
 const startTime = performance.now();
 let lastTime = startTime;
 terrain.update(0);
+
 const [waterDuDvTexture, waterNormalTexture] = await Promise.all([
     loadTexturePower2(gl, '/water_duDv.png'),
     loadTexturePower2(gl, '/water_normal.png'),
 ]);
-function loop(): void {
+function render(): void {
     const now = performance.now();
-    const dt = (now - lastTime) / 1000;
-    lastTime = now;
-    camera.update(dt);
-    terrain.update(dt);
-    const terrainHeight = terrain.getHeightAtPlayerPosition(camera.x, camera.z);
-    if (camera.y - playerHeight < terrainHeight) {
-        camera.y = terrainHeight + playerHeight;
-    }
     clear();
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     const terrainChunks = terrain.getVisibleLoadedChunks(camera.frustum);
@@ -443,6 +436,34 @@ function loop(): void {
         gl.COLOR_BUFFER_BIT,
         gl.LINEAR,
     );
+}
+
+const updateDt = 1 / 200;
+
+function loop(): void {
+    const now = performance.now();
+    const dt = (now - lastTime) / 1000;
+    const iterations = Math.floor(dt / updateDt);
+    if (iterations == 0) {
+        requestAnimationFrame(loop);
+        return;
+    }
+    const fullUpdateDt = iterations * updateDt;
+    const excess = dt - fullUpdateDt;
+    lastTime = now - excess;
+    for (let i = 0; i < iterations; i++) {
+        camera.update(updateDt);
+        const terrainHeight = terrain.getHeightAtPlayerPosition(
+            camera.x,
+            camera.z,
+        );
+        if (camera.y - playerHeight < terrainHeight) {
+            camera.y = terrainHeight + playerHeight;
+        }
+    }
+    camera.endUpdate();
+    terrain.update(fullUpdateDt);
+    render();
     requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

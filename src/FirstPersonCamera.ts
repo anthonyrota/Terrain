@@ -33,6 +33,8 @@ const MOVEMENT_KEYS = [
     [[KEYS.A, KEYS.LEFT_ARROW], vec3.fromValues(-1, 0, 0)],
 ] as const;
 
+const temp = vec3.create();
+
 export class FirstPersonCamera extends Disposable {
     private _keyControls = new KeyControls();
     private _velocity = vec3.create();
@@ -211,7 +213,6 @@ export class FirstPersonCamera extends Disposable {
         MOVEMENT_KEYS.forEach(([keyCodes, movementDirection]) => {
             keyCodes.forEach((keyCode) => {
                 if (this._keyControls.isKeyCodePressed(keyCode)) {
-                    const temp = vec3.create();
                     const origin = vec3.fromValues(0, 0, 0);
                     vec3.rotateY(
                         temp,
@@ -243,13 +244,14 @@ export class FirstPersonCamera extends Disposable {
             this._velocity[1] = -this._maxFallSpeed;
         }
 
-        const temp = vec3.create();
         vec3.scale(temp, this._velocity, dt);
         vec3.add(this._position, this._position, temp);
 
         this._velocity[0] *= this._horizontalDrag ** dt;
         this._velocity[2] *= this._horizontalDrag ** dt;
+    }
 
+    public endUpdate(): void {
         this._calculateLookAtMatrix();
         this._calculateFrustum();
     }
